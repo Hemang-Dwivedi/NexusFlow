@@ -1,0 +1,18 @@
+<Solution>
+  <Project Path="src/NexusFlow.App/NexusFlow.App.csproj" />
+  <Project Path="src/NexusFlow.Core/NexusFlow.Core.csproj" Id="cd7e1866-6019-4096-8bbb-503769624ac6" />
+  <Project Path="src/NexusFlow.Diagnostics/NexusFlow.Diagnostics.csproj" Id="7724634f-ede5-4ff0-a106-b048e38f0be3" />
+  <Project Path="src/NexusFlow.Discovery/NexusFlow.Discovery.csproj" Id="4a2a91ad-a524-4a93-aacd-bb908de13009" />
+  <Project Path="src/NexusFlow.Display/NexusFlow.Display.csproj" Id="5d440698-ab73-427a-8892-5fe7260b1686" />
+  <Project Path="src/NexusFlow.Identity/NexusFlow.Identity.csproj" Id="845d426d-04b1-4703-838a-af092ec3526f" />
+  <Project Path="src/NexusFlow.Injection/NexusFlow.Injection.csproj" Id="da22505e-64a9-4b52-b4d8-2a25875e4d3a" />
+  <Project Path="src/NexusFlow.Input/NexusFlow.Input.csproj" Id="8ec6aace-7210-45f1-a85a-1b72f5b82163" />
+  <Project Path="src/NexusFlow.Protocol/NexusFlow.Protocol.csproj" Id="65c5793c-c4d6-406f-b988-8bc3894ae7e5" />
+  <Project Path="src/NexusFlow.Routing/NexusFlow.Routing.csproj" />
+  <Project Path="src/NexusFlow.Settings/NexusFlow.Settings.csproj" Id="1c191f43-7eeb-4956-b271-11f9965a8d9d" />
+  <Project Path="src/NexusFlow.Transport/NexusFlow.Transport.csproj" Id="f7ffa7bd-b06f-42a5-a7a6-952ddf291761" />
+  <Project Path="src/NexusFlow.Trust/NexusFlow.Trust.csproj" Id="067b7c7d-7efb-48b9-9de4-efeb050465e2" />
+  <Project Path="src/NexusFlow.UI/NexusFlow.UI.csproj" Id="82634054-eaf6-437f-8c46-81246e549971" />
+  <Project Path="tests/NexusFlow.Tests.Integration/NexusFlow.Tests.Integration.csproj" Id="8624a2a1-3f31-467e-9917-8120d6d23fd8" />
+  <Project Path="tests/NexusFlow.Tests.Unit/NexusFlow.Tests.Unit.csproj" Id="b0f79f65-1e16-461e-9339-85ae1ce5ec7e" />
+</Solution>

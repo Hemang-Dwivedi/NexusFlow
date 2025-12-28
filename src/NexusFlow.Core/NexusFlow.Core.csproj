@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NexusFlow.Diagnostics\NexusFlow.Diagnostics.csproj" />
+    <ProjectReference Include="..\NexusFlow.Discovery\NexusFlow.Discovery.csproj" />
+    <ProjectReference Include="..\NexusFlow.Display\NexusFlow.Display.csproj" />
+    <ProjectReference Include="..\NexusFlow.Identity\NexusFlow.Identity.csproj" />
+    <ProjectReference Include="..\NexusFlow.Injection\NexusFlow.Injection.csproj" />
+    <ProjectReference Include="..\NexusFlow.Input\NexusFlow.Input.csproj" />
+    <ProjectReference Include="..\NexusFlow.Protocol\NexusFlow.Protocol.csproj" />
+    <ProjectReference Include="..\NexusFlow.Routing\NexusFlow.Routing.csproj" />
+    <ProjectReference Include="..\NexusFlow.Settings\NexusFlow.Settings.csproj" />
+    <ProjectReference Include="..\NexusFlow.Transport\NexusFlow.Transport.csproj" />
+    <ProjectReference Include="..\NexusFlow.Trust\NexusFlow.Trust.csproj" />
+  </ItemGroup>
+
+</Project>
