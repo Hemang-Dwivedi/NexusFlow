@@ -1,14 +1,21 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+	<AvaloniaUseCompiledBindings>true</AvaloniaUseCompiledBindings>
   </PropertyGroup>
 
-  <ItemGroup>
+<ItemGroup>
+  <PackageReference Include="Avalonia" Version="11.3.9" />
+  <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.1" />
+</ItemGroup>
+
+	<ItemGroup>
     <ProjectReference Include="..\NexusFlow.Core\NexusFlow.Core.csproj" />
     <ProjectReference Include="..\NexusFlow.Diagnostics\NexusFlow.Diagnostics.csproj" />
+    <ProjectReference Include="..\NexusFlow.Settings\NexusFlow.Settings.csproj" />
   </ItemGroup>
 
 </Project>

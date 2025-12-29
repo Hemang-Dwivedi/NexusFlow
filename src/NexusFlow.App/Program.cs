@@ -1,22 +1,55 @@
 ﻿using System;
 using Avalonia;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using NexusFlow.App.Services;
+using NexusFlow.Core.Discovery;
+using NexusFlow.Identity;
 
 namespace NexusFlow.App
 {
-    internal sealed class Program
-    {
-        // Initialization code. Don't use any Avalonia, third-party APIs or any
-        // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
-        // yet and stuff might break.
-        [STAThread]
-        public static void Main(string[] args) => BuildAvaloniaApp()
-            .StartWithClassicDesktopLifetime(args);
+	internal sealed class Program
+	{
+		public static IHost? AppHost { get; private set; }
 
-        // Avalonia configuration, don't remove; also used by visual designer.
-        public static AppBuilder BuildAvaloniaApp()
-            => AppBuilder.Configure<App>()
-                .UsePlatformDetect()
-                .WithInterFont()
-                .LogToTrace();
-    }
+		[STAThread]
+		public static void Main(string[] args)
+		{
+			AppHost = CreateHostBuilder(args).Build();
+
+			BuildAvaloniaApp()
+				.StartWithClassicDesktopLifetime(args);
+
+			AppHost.Dispose();
+			AppHost = null;
+		}
+
+		private static IHostBuilder CreateHostBuilder(string[] args) =>
+			Host.CreateDefaultBuilder(args)
+				.ConfigureServices((ctx, services) =>
+				{
+					// Identity (stable PeerId later; for now ensure you have an implementation)
+					services.AddSingleton<ILocalIdentity, LocalIdentity>();
+
+					// Core discovery coordinator
+					services.AddSingleton(sp =>
+					{
+						var identity = sp.GetRequiredService<ILocalIdentity>();
+
+						// TODO: move to NexusFlow.Settings
+						const int tcpPort = 49800;
+
+						return new DiscoveryCoordinator(identity, tcpPort);
+					});
+
+					// Start discovery in background
+					services.AddHostedService<DiscoveryHostedService>();
+				});
+
+		public static AppBuilder BuildAvaloniaApp()
+			=> AppBuilder.Configure<App>()
+				.UsePlatformDetect()
+				.WithInterFont()
+				.LogToTrace();
+	}
 }

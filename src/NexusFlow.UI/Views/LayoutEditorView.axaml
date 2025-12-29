@@ -1,0 +1,126 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="NexusFlow.UI.Views.LayoutEditorView">
+
+  <!-- App background -->
+  <Border Background="#111" Padding="16">
+
+    <!-- Card -->
+    <Border Background="#1E1E1E"
+            BorderBrush="#444"
+            BorderThickness="1"
+            CornerRadius="10"
+            Padding="12">
+
+      <StackPanel Spacing="12">
+
+        <!-- Top command bar (Windows-style: explicit Apply/Revert) -->
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="Revert"
+                  Command="{Binding RevertCommand}"
+                  IsEnabled="{Binding IsDirty}"
+                  Width="90"/>
+
+          <Button Content="Apply"
+                  Command="{Binding ApplyCommand}"
+                  IsEnabled="{Binding IsDirty}"
+                  Width="90"/>
+        </StackPanel>
+
+        <!-- Peer block (DRAG SURFACE) -->
+        <Border x:Name="PeerDragSurface"
+                Background="#202020"
+                BorderBrush="#555"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="12">
+
+          <DockPanel LastChildFill="True">
+
+            <!-- Header -->
+            <TextBlock DockPanel.Dock="Top"
+                       Foreground="White"
+                       FontSize="18"
+                       Text="{Binding LocalCluster.PeerName}" />
+
+            <!-- Identify button -->
+            <Button DockPanel.Dock="Bottom"
+                    HorizontalAlignment="Right"
+                    Width="90"
+                    Content="Identify" />
+
+            <!-- Display cluster area -->
+            <Border Margin="0,10,0,10"
+                    Background="#0B0B0B"
+                    BorderBrush="#333"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="8">
+
+              <!-- RIGID CLUSTER HOST (THIS MOVES: bound to DRAFT offsets) -->
+              <Border x:Name="PeerClusterHost"
+                      Background="Transparent">
+                <Border.RenderTransform>
+                  <TranslateTransform X="{Binding DraftOffsetX}"
+                                      Y="{Binding DraftOffsetY}"/>
+                </Border.RenderTransform>
+
+                <!-- Fixed viewport so ItemsPresenter never collapses -->
+                <Border Width="900"
+                        Height="400"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Top"
+                        Background="Transparent">
+
+                  <ItemsControl Width="900"
+                                Height="400"
+                                ItemsSource="{Binding Normalized.Displays}"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch">
+
+                    <!-- Canvas is the layout panel -->
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <Canvas Width="900" Height="400"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+
+                    <!-- Monitor rectangles -->
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Width="{Binding Nw}"
+                                Height="{Binding Nh}"
+                                Background="#0078D4"
+                                BorderBrush="White"
+                                BorderThickness="1"
+                                CornerRadius="6">
+
+                          <!-- Position via transform (robust at runtime) -->
+                          <Border.RenderTransform>
+                            <TranslateTransform X="{Binding Nx}"
+                                                Y="{Binding Ny}" />
+                          </Border.RenderTransform>
+
+                          <TextBlock Text="{Binding Source.DisplayNumber}"
+                                     Foreground="White"
+                                     FontSize="28"
+                                     HorizontalAlignment="Center"
+                                     VerticalAlignment="Center"/>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+
+                  </ItemsControl>
+
+                </Border>
+              </Border>
+
+            </Border>
+
+          </DockPanel>
+        </Border>
+
+      </StackPanel>
+    </Border>
+  </Border>
+</UserControl>
