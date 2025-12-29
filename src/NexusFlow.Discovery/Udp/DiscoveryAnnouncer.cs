@@ -1,5 +1,4 @@
-﻿using System.Net;
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using NexusFlow.Protocol.Discovery;
 
 namespace NexusFlow.Discovery.Udp;
@@ -7,9 +6,9 @@ namespace NexusFlow.Discovery.Udp;
 public sealed class DiscoveryAnnouncer : IDisposable
 {
 	private readonly UdpClient _udp;
-	private readonly IPEndPoint _broadcastEp;
 	private readonly Func<HelloBroadcast> _helloFactory;
 	private readonly TimeSpan _interval;
+	private readonly IReadOnlyList<System.Net.IPEndPoint> _targets;
 
 	private CancellationTokenSource? _cts;
 	private Task? _loop;
@@ -22,7 +21,7 @@ public sealed class DiscoveryAnnouncer : IDisposable
 		_udp = new UdpClient(AddressFamily.InterNetwork);
 		_udp.EnableBroadcast = true;
 
-		_broadcastEp = new IPEndPoint(IPAddress.Broadcast, DiscoveryProtocol.UdpPort);
+		_targets = NetworkBroadcast.GetBroadcastEndpoints(DiscoveryProtocol.UdpPort);
 	}
 
 	public void Start()
@@ -36,7 +35,7 @@ public sealed class DiscoveryAnnouncer : IDisposable
 	{
 		if (_cts is null) return;
 		_cts.Cancel();
-		try { if (_loop is not null) await _loop; } catch { /* swallow */ }
+		try { if (_loop is not null) await _loop; } catch { }
 		_cts.Dispose();
 		_cts = null;
 		_loop = null;
@@ -51,8 +50,12 @@ public sealed class DiscoveryAnnouncer : IDisposable
 			var hello = _helloFactory();
 			var bytes = HelloCodec.Encode(hello);
 
-			// Fire-and-forget send, but await to avoid flooding.
-			await _udp.SendAsync(bytes, bytes.Length, _broadcastEp);
+			foreach (var ep in _targets)
+			{
+				// best-effort: one interface failing must not stop others
+				try { await _udp.SendAsync(bytes, bytes.Length, ep); }
+				catch { /* swallow */ }
+			}
 
 			await timer.WaitForNextTickAsync(ct);
 		}

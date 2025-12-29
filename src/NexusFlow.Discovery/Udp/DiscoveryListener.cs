@@ -17,11 +17,16 @@ public sealed class DiscoveryListener : IDisposable
 	{
 		_registry = registry;
 
-		// Bind to all interfaces on the discovery port
-		_udp = new UdpClient(new IPEndPoint(IPAddress.Any, DiscoveryProtocol.UdpPort))
-		{
-			EnableBroadcast = true
-		};
+		_udp = new UdpClient(AddressFamily.InterNetwork);
+
+		// IMPORTANT on Windows: allow binding even if something else touched the port.
+		_udp.Client.ExclusiveAddressUse = false;
+		_udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+
+		_udp.EnableBroadcast = true;
+
+		// Bind AFTER setting options
+		_udp.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryProtocol.UdpPort));
 	}
 
 	public void Start()
@@ -35,7 +40,7 @@ public sealed class DiscoveryListener : IDisposable
 	{
 		if (_cts is null) return;
 		_cts.Cancel();
-		try { if (_loop is not null) await _loop; } catch { /* swallow */ }
+		try { if (_loop is not null) await _loop; } catch { }
 		_cts.Dispose();
 		_cts = null;
 		_loop = null;
@@ -46,26 +51,18 @@ public sealed class DiscoveryListener : IDisposable
 		while (!ct.IsCancellationRequested)
 		{
 			UdpReceiveResult result;
-			try
-			{
-				result = await _udp.ReceiveAsync(ct);
-			}
-			catch (OperationCanceledException)
-			{
-				break;
-			}
+			try { result = await _udp.ReceiveAsync(ct); }
+			catch (OperationCanceledException) { break; }
 
 			if (!HelloCodec.TryDecode(result.Buffer, out var hello) || hello is null)
 				continue;
 
-			// Optional: ignore self in Core by checking PeerId; listener stays pure.
-			var now = DateTimeOffset.UtcNow;
 			_registry.ObserveHello(
-				peerId: hello.PeerId,
-				deviceName: hello.DeviceName,
-				tcpPort: hello.TcpPort,
-				protocolVersion: hello.ProtocolVersion,
-				now: now
+				hello.PeerId,
+				hello.DeviceName,
+				hello.TcpPort,
+				hello.ProtocolVersion,
+				DateTimeOffset.UtcNow
 			);
 		}
 	}

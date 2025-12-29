@@ -52,8 +52,12 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 
 	private void OnPeerDiscovered(PeerDiscovered e)
 	{
-		if (e.Peer.PeerId == _identity.PeerId) return;
+		if(e.Peer.DeviceName != "ASINPA-USA-031")
+		{
 
+		}
+		if (e.Peer.PeerId == _identity.PeerId) return;
+		
 		Dispatcher.UIThread.Post(() =>
 		{
 			if (Peers.Any(x => x.PeerId == e.Peer.PeerId)) return;
