@@ -1,11 +1,12 @@
-using System.Linq;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NexusFlow.App.Views;
+using System.Linq;
 
 namespace NexusFlow.App
 {
@@ -26,7 +27,7 @@ namespace NexusFlow.App
 				if (Program.AppHost is not null)
 					await Program.AppHost.StartAsync();
 
-				desktop.MainWindow = new MainWindow { };
+				desktop.MainWindow = Program.AppHost!.Services.GetRequiredService<MainWindow>();
 
 				desktop.Exit += async (_, __) =>
 				{

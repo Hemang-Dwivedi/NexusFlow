@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\NexusFlow.Settings\NexusFlow.Settings.csproj" />
+  </ItemGroup>
+
 </Project>
