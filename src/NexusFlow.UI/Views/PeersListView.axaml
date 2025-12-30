@@ -5,59 +5,76 @@
              x:Class="NexusFlow.UI.Views.PeersListView"
              x:DataType="vm:PeersListViewModel">
 
+  <Grid RowDefinitions="Auto,*"
+        Margin="16"
+        RowSpacing="12"
+        VerticalAlignment="Stretch"
+        HorizontalAlignment="Stretch">
 
-    <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="12">
-        <TextBlock
-            Text="Discovered Peers"
-            FontSize="18"
-            FontWeight="SemiBold"/>
+    <TextBlock Text="Discovered Peers"
+               FontSize="18"
+               FontWeight="SemiBold"/>
 
-        <Border Grid.Row="1"
-                CornerRadius="8"
-                BorderThickness="1"
-                BorderBrush="{DynamicResource ThemeBorderLowBrush}"
-                Padding="12">
+    <Border Grid.Row="1"
+            VerticalAlignment="Stretch"
+            HorizontalAlignment="Stretch"
+            CornerRadius="8"
+            BorderThickness="1"
+            BorderBrush="{DynamicResource ThemeBorderLowBrush}"
+            Padding="12">
 
-            <Grid RowDefinitions="Auto,*" RowSpacing="10">
+      <Grid RowDefinitions="Auto,*"
+            RowSpacing="10"
+            VerticalAlignment="Stretch"
+            HorizontalAlignment="Stretch">
+        <dg:DataGrid Grid.Row="1"
+             ItemsSource="{Binding Peers}"
+             AutoGenerateColumns="False"
+             MinHeight="100"
+             Background="#202020"
+             Foreground="White"
+             BorderBrush="#202021"
+             BorderThickness="2"
+             GridLinesVisibility="All"
+             HeadersVisibility="Column"
+             IsReadOnly="True">
 
-                <TextBlock
-                    Text="No peers discovered yet (LAN UDP broadcast)."
-                    IsVisible="{Binding !HasPeers}" />
+  <dg:DataGrid.Columns>
 
-                <dg:DataGrid
-                    Grid.Row="1"
-                    IsVisible="{Binding HasPeers}"
-                    ItemsSource="{Binding Peers}"
-                    AutoGenerateColumns="False"
-                    CanUserReorderColumns="False"
-                    CanUserResizeColumns="True"
-                    GridLinesVisibility="None"
-                    HeadersVisibility="Column">
+    <!-- Device name -->
+    <dg:DataGridTextColumn Header="Device"
+                           Binding="{Binding DeviceName}"
+                           Width="2*" />
 
-                    <dg:DataGrid.Columns>
-                        <dg:DataGridTextColumn
-                            Header="Device"
-                            Binding="{Binding DeviceName}"
-                            Width="2*" />
+    <!-- Short Peer ID -->
+    <dg:DataGridTextColumn Header="Peer ID"
+                           Binding="{Binding PeerIdShort}"
+                           Width="*" />
 
-                        <dg:DataGridTextColumn
-                            Header="PeerId"
-                            Binding="{Binding PeerIdShort}"
-                            Width="*" />
+    <!-- TCP port -->
+    <dg:DataGridTextColumn Header="TCP"
+                           Binding="{Binding TcpPort}"
+                           Width="*" />
 
-                        <dg:DataGridTextColumn
-                            Header="TCP Port"
-                            Binding="{Binding TcpPort}"
-                            Width="*" />
+    <!-- Action button -->
+    <dg:DataGridTemplateColumn Header="Action"
+                               Width="*">
+      <dg:DataGridTemplateColumn.CellTemplate>
+        <DataTemplate x:DataType="vm:PeerRowViewModel">
+          <Button Content="Pair"
+                  Padding="6,2"
+                  Command="{Binding DataContext.PairCommand,
+                                    RelativeSource={RelativeSource AncestorType=UserControl}}"
+                  CommandParameter="{Binding}" />
+        </DataTemplate>
+      </dg:DataGridTemplateColumn.CellTemplate>
+    </dg:DataGridTemplateColumn>
 
-                        <dg:DataGridTextColumn
-                            Header="Last Seen (UTC)"
-                            Binding="{Binding LastSeen}"
-                            Width="2*" />
-                    </dg:DataGrid.Columns>
+  </dg:DataGrid.Columns>
+</dg:DataGrid>
 
-                </dg:DataGrid>
-            </Grid>
-        </Border>
-    </Grid>
+      </Grid>
+
+    </Border>
+  </Grid>
 </UserControl>

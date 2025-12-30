@@ -7,14 +7,15 @@
         Width="1200" Height="750"
         Title="NexusFlow">
 
-  <TabControl>
-    <TabItem Header="Layout">
-      <uiViews:LayoutEditorView DataContext="{Binding Layout}" />
-    </TabItem>
+  <TabControl HorizontalContentAlignment="Stretch"
+            VerticalContentAlignment="Stretch">
+  <TabItem Header="Layout">
+    <uiViews:LayoutEditorView DataContext="{Binding Layout}" />
+  </TabItem>
 
-    <TabItem Header="Peers">
-      <uiViews:PeersListView DataContext="{Binding Peers}" />
-    </TabItem>
-  </TabControl>
+  <TabItem Header="Peers">
+    <uiViews:PeersListView DataContext="{Binding Peers}" />
+  </TabItem>
+</TabControl>
 
 </Window>

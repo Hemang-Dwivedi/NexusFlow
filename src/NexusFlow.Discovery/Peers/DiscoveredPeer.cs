@@ -5,5 +5,7 @@ public sealed record DiscoveredPeer(
 	string DeviceName,
 	int TcpPort,
 	int ProtocolVersion,
-	DateTimeOffset LastSeen
+	DateTimeOffset LastSeen,
+	System.Net.IPAddress? LastKnownAddress
+
 );

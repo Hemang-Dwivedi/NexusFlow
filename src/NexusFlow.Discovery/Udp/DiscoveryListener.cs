@@ -62,7 +62,8 @@ public sealed class DiscoveryListener : IDisposable
 				hello.DeviceName,
 				hello.TcpPort,
 				hello.ProtocolVersion,
-				DateTimeOffset.UtcNow
+				DateTimeOffset.UtcNow,
+				result.RemoteEndPoint.Address
 			);
 		}
 	}

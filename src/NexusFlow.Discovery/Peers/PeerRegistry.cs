@@ -23,9 +23,9 @@ public sealed class PeerRegistry : IDisposable
 	public IReadOnlyCollection<DiscoveredPeer> Snapshot()
 		=> _peers.Values.ToArray();
 
-	public void ObserveHello(string peerId, string deviceName, int tcpPort, int protocolVersion, DateTimeOffset now)
+	public void ObserveHello(string peerId, string deviceName, int tcpPort, int protocolVersion, DateTimeOffset now, System.Net.IPAddress? Address)
 	{
-		var incoming = new DiscoveredPeer(peerId, deviceName, tcpPort, protocolVersion, now);
+		var incoming = new DiscoveredPeer(peerId, deviceName, tcpPort, protocolVersion, now, Address);
 
 		if (_peers.TryAdd(peerId, incoming))
 		{
