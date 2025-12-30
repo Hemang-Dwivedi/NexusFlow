@@ -1,7 +1,9 @@
 ﻿using NexusFlow.Identity;
 using NexusFlow.Protocol.Pairing;
+using NexusFlow.Protocol.Transport;
 using NexusFlow.Transport;
 using NexusFlow.Trust;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -17,11 +19,18 @@ public sealed class PairingCoordinator
 		_me = me;
 	}
 
-	public async Task<PairingSession> BeginPairingAsync(IPAddress peerAddress, int peerPort, CancellationToken ct)
+	public async Task<PairingSession> BeginPairingAsync(
+		IPAddress peerAddress,
+		int peerPort,
+		CancellationToken ct)
 	{
+		var client = new TcpClient(AddressFamily.InterNetwork);
+		await client.ConnectAsync(peerAddress, peerPort, ct);
+		var stream = client.GetStream();
+
 		using var ecdh = Ecdh.Create();
-		var sessionId = Guid.NewGuid();
 		var nonce = RandomNumberGenerator.GetBytes(16);
+		var sessionId = Guid.NewGuid();
 
 		var hello = new PairingHello(
 			PeerId: _me.PeerId,
@@ -32,21 +41,24 @@ public sealed class PairingCoordinator
 			ProtocolVersion: 1
 		);
 
-		var client = new TcpClient(AddressFamily.InterNetwork);
-		await client.ConnectAsync(peerAddress, peerPort, ct);
-		var stream = client.GetStream();
+		await FramingV2.WriteAsync(
+			stream,
+			MessageType.Pairing,
+			PairingCodec.Encode(hello),
+			ct
+		);
 
-		await Framing.WriteFrameAsync(stream, PairingCodec.Encode(hello), ct);
+		// receive remote hello
+		var (type, remoteHelloBytes) = await FramingV2.ReadAsync(stream, ct);
+		if (type != MessageType.Pairing)
+			throw new InvalidOperationException("Unexpected message type");
 
-		var remoteHelloBytes = await Framing.ReadFrameAsync(stream, ct);
 		var remoteHello = PairingCodec.Decode<PairingHello>(remoteHelloBytes)
-						 ?? throw new InvalidOperationException("Invalid remote hello.");
+			?? throw new InvalidOperationException("Invalid remote hello");
 
-		// shared secret
+		// compute shared secret + code + fingerprint
 		using var remotePub = Ecdh.ImportPublic(remoteHello.EcdhPublicKey);
 		var shared = ecdh.DeriveKeyMaterial(remotePub);
-
-		// transcript = stable concat
 		var transcript = BuildTranscript(hello, remoteHello);
 
 		var code = Sas.Compute6DigitCode(shared, transcript);
@@ -62,6 +74,7 @@ public sealed class PairingCoordinator
 			client
 		);
 	}
+
 
 	private static byte[] BuildTranscript(PairingHello a, PairingHello b)
 	{
@@ -124,9 +137,13 @@ public sealed class PairingSession
 		Client = client;
 	}
 
-	public async Task SendDecisionAsync(bool accepted, CancellationToken ct)
-		=> await Framing.WriteFrameAsync(Stream, PairingCodec.Encode(new PairingDecision(SessionId, accepted)), ct);
-
+	public Task SendDecisionAsync(bool accepted, CancellationToken ct)
+	=> FramingV2.WriteAsync(
+		Stream,
+		MessageType.Pairing,
+		PairingCodec.Encode(new PairingDecision(SessionId, accepted)),
+		ct
+	);
 	public async Task<PairingDecision> WaitDecisionAsync(CancellationToken ct)
 	{
 		var bytes = await Framing.ReadFrameAsync(Stream, ct);

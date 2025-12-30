@@ -1,6 +1,7 @@
 ﻿using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using NexusFlow.Core.Control;
 using NexusFlow.Core.Discovery;
 using NexusFlow.Core.Trust;
 using NexusFlow.Discovery.Peers;
@@ -8,9 +9,12 @@ using NexusFlow.Identity;
 using NexusFlow.Trust;
 using NexusFlow.UI.Services;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.Window;
+using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -18,22 +22,28 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 {
 	private readonly DiscoveryCoordinator _discovery;
 	private readonly ILocalIdentity _identity;
+
 	private readonly Dictionary<string, PeerRowViewModel> _peerIndex = new();
+	private readonly HashSet<string> _trustedPeerIds = new();
+
 	private readonly PairingCoordinator _pairing;
 	private readonly PairingListener _pairingListener;
 	private readonly IPairingDialogService _dialogs;
 	private readonly TrustStore _trustStore;
+
+	private readonly ConnectionManager _connections;
+
 	public ObservableCollection<PeerRowViewModel> Peers { get; } = new();
-	private readonly HashSet<string> _trustedPeerIds = new();
 	public bool HasPeers => Peers.Count > 0;
 
 	public PeersListViewModel(
-	   DiscoveryCoordinator discovery,
-	   ILocalIdentity identity,
-	   PairingCoordinator pairing,
-	   PairingListener pairingListener,
-	   IPairingDialogService dialogs,
-	   TrustStore trustStore)
+		DiscoveryCoordinator discovery,
+		ILocalIdentity identity,
+		PairingCoordinator pairing,
+		PairingListener pairingListener,
+		IPairingDialogService dialogs,
+		TrustStore trustStore,
+		ConnectionManager connections)
 	{
 		_discovery = discovery;
 		_identity = identity;
@@ -41,19 +51,26 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		_pairingListener = pairingListener;
 		_dialogs = dialogs;
 		_trustStore = trustStore;
+		_connections = connections;
 
 		Peers.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasPeers));
 
-		RefreshFromSnapshot();
 		LoadTrustCache();
+		RefreshFromSnapshot();
 
 		_discovery.Registry.OnPeerDiscovered += OnPeerDiscovered;
 		_discovery.Registry.OnPeerUpdated += OnPeerUpdated;
 		_discovery.Registry.OnPeerLost += OnPeerLost;
 
-		// Incoming pairing
+		// Incoming pairing requests
 		_pairingListener.IncomingPairing += OnIncomingPairing;
+
+		// Connection events (secure control channel)
+		_connections.PeerConnected += OnPeerConnected;
+		_connections.PeerDisconnected += OnPeerDisconnected;
+		_connections.PeerRttUpdated += OnPeerRttUpdated;
 	}
+
 	private void LoadTrustCache()
 	{
 		_trustedPeerIds.Clear();
@@ -64,6 +81,8 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 
 	private void AddOrUpdatePeer(DiscoveredPeer peer)
 	{
+		if (peer.LastKnownAddress is null) return;
+
 		Dispatcher.UIThread.Post(() =>
 		{
 			if (_peerIndex.TryGetValue(peer.PeerId, out var existing))
@@ -71,6 +90,9 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 				existing.DeviceName = peer.DeviceName;
 				existing.TcpPort = peer.TcpPort;
 				existing.LastSeen = peer.LastSeen;
+				existing.Address = peer.LastKnownAddress!;
+				existing.IsTrusted = _trustedPeerIds.Contains(peer.PeerId);
+				existing.IsConnected = _connections.Snapshot().Any(c => c.PeerId == peer.PeerId);
 				return;
 			}
 
@@ -79,13 +101,15 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 				peer.DeviceName,
 				peer.TcpPort,
 				peer.LastSeen,
-				peer.LastKnownAddress,
+				peer.LastKnownAddress!,
 				_trustedPeerIds.Contains(peer.PeerId)
 			);
 
+			row.IsConnected = _connections.Snapshot().Any(c => c.PeerId == peer.PeerId);
+			row.RttMs = null;
+
 			_peerIndex[peer.PeerId] = row;
 			Peers.Add(row);
-
 		});
 	}
 
@@ -110,11 +134,47 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		});
 	}
 
+	private void RefreshFromSnapshot()
+	{
+		var snapshot = _discovery.Registry.Snapshot()
+			.Where(p => p.PeerId != _identity.PeerId)
+			.OrderBy(p => p.DeviceName)
+			.ToList();
+
+		Dispatcher.UIThread.Post(() =>
+		{
+			_peerIndex.Clear();
+			Peers.Clear();
+
+			var connected = _connections.Snapshot().Select(c => c.PeerId).ToHashSet();
+
+			foreach (var p in snapshot)
+			{
+				if (p.LastKnownAddress is null) continue;
+
+				var row = new PeerRowViewModel(
+					p.PeerId,
+					p.DeviceName,
+					p.TcpPort,
+					p.LastSeen,
+					p.LastKnownAddress!,
+					_trustedPeerIds.Contains(p.PeerId)
+				);
+
+				row.IsConnected = connected.Contains(p.PeerId);
+				row.RttMs = null;
+
+				_peerIndex[p.PeerId] = row;
+				Peers.Add(row);
+			}
+		});
+	}
+
 	#region Pairing
+
 	[RelayCommand]
 	private async Task PairAsync(PeerRowViewModel row)
 	{
-		// Outgoing pairing flow
 		var ct = CancellationToken.None;
 
 		var session = await _pairing.BeginPairingAsync(row.Address, row.TcpPort, ct);
@@ -136,18 +196,9 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 
 		session.Close();
 	}
-	private void MarkRowTrusted(string peerId, bool trusted)
-	{
-		Dispatcher.UIThread.Post(() =>
-		{
-			var row = Peers.FirstOrDefault(x => x.PeerId == peerId);
-			if (row != null) row.IsTrusted = trusted;
-		});
-	}
 
 	private async void OnIncomingPairing(IncomingPairingSession s)
 	{
-		// Must show dialog on UI thread, but we can await in a fire-and-forget safe way
 		await Dispatcher.UIThread.InvokeAsync(async () =>
 		{
 			var ct = CancellationToken.None;
@@ -161,8 +212,20 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 			if (acceptedLocal && remoteDecision.Accepted)
 			{
 				PersistTrust(s.RemotePeerId, s.RemoteDeviceName, s.Fingerprint);
+				_trustedPeerIds.Add(s.RemotePeerId);
+				MarkRowTrusted(s.RemotePeerId, true);
 			}
+
 			s.Close();
+		});
+	}
+
+	private void MarkRowTrusted(string peerId, bool trusted)
+	{
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (_peerIndex.TryGetValue(peerId, out var row))
+				row.IsTrusted = trusted;
 		});
 	}
 
@@ -171,7 +234,6 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		var state = _trustStore.Load();
 
 		state.Peers.RemoveAll(p => p.PeerId == peerId);
-
 		state.Peers.Add(new TrustedPeer(
 			PeerId: peerId,
 			DeviceName: deviceName,
@@ -181,35 +243,72 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		_trustStore.Save(state);
 	}
 
-	// refresh + event handlers: ensure you pass Address into PeerRowViewModel
-	private void RefreshFromSnapshot()
-	{
-		var snapshot = _discovery.Registry.Snapshot()
-			.Where(p => p.PeerId != _identity.PeerId)
-			.OrderBy(p => p.DeviceName)
-			.ToList();
+	#endregion
 
+	#region Connections (Secure Control Channel)
+
+	[RelayCommand]
+	private async Task ConnectAsync(PeerRowViewModel row)
+	{
+		if (!row.IsTrusted) return;
+		if (row.IsConnected) return;
+
+		var ct = CancellationToken.None;
+		await _connections.ConnectAsync(row.Address, row.TcpPort, ct);
+	}
+
+	[RelayCommand]
+	private void Disconnect(PeerRowViewModel row)
+	{
+		if (!row.IsConnected) return;
+		_connections.Disconnect(row.PeerId);
+	}
+
+	private void OnPeerConnected(ConnectedPeer p)
+	{
 		Dispatcher.UIThread.Post(() =>
 		{
-			Peers.Clear();
-			foreach (var p in snapshot)
+			if (_peerIndex.TryGetValue(p.PeerId, out var row))
 			{
-				if (p.LastKnownAddress is null) continue;
-				Peers.Add(new PeerRowViewModel(p.PeerId, p.DeviceName, p.TcpPort, p.LastSeen, p.LastKnownAddress, _trustedPeerIds.Contains(p.PeerId)));
+				row.IsConnected = true;
+				row.RttMs = null;
 			}
 		});
 	}
 
-	// TODO: update OnPeerDiscovered/Updated/Lost similarly with address.
-	// Keep your existing logic but always pass p.LastKnownAddress.
-	// ...
+	private void OnPeerDisconnected(string peerId)
+	{
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (_peerIndex.TryGetValue(peerId, out var row))
+			{
+				row.IsConnected = false;
+				row.RttMs = null;
+			}
+		});
+	}
+
+	private void OnPeerRttUpdated(string peerId, int rttMs)
+	{
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (_peerIndex.TryGetValue(peerId, out var row))
+				row.RttMs = rttMs;
+		});
+	}
+
+	#endregion
 
 	public void Dispose()
 	{
 		_discovery.Registry.OnPeerDiscovered -= OnPeerDiscovered;
 		_discovery.Registry.OnPeerUpdated -= OnPeerUpdated;
 		_discovery.Registry.OnPeerLost -= OnPeerLost;
+
 		_pairingListener.IncomingPairing -= OnIncomingPairing;
+
+		_connections.PeerConnected -= OnPeerConnected;
+		_connections.PeerDisconnected -= OnPeerDisconnected;
+		_connections.PeerRttUpdated -= OnPeerRttUpdated;
 	}
-	#endregion
 }

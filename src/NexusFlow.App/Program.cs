@@ -3,8 +3,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NexusFlow.App.Services;
 using NexusFlow.App.Views;
+using NexusFlow.Core.Control;
 using NexusFlow.Core.Discovery;
 using NexusFlow.Core.Services;
+using NexusFlow.Core.Transport;
 using NexusFlow.Core.Trust;
 using NexusFlow.Display.Windows;
 using NexusFlow.Identity;
@@ -90,9 +92,8 @@ namespace NexusFlow.App
 						// Reuse the discovered TcpPort (or choose a dedicated one if you prefer)
 						var me = sp.GetRequiredService<ILocalIdentity>();
 						// If you already have a configured port provider, use it. For now hardcode or reuse your discovery tcp port.
-						return new PairingListener(me, port: 49800);
+						return new PairingListener(me);
 					});
-					services.AddHostedService<PairingHostedService>();
 					services.AddSingleton<NexusFlow.UI.Services.IPairingDialogService, NexusFlow.App.Services.PairingDialogService>();
 					services.AddSingleton(sp =>
 					{
@@ -107,10 +108,16 @@ namespace NexusFlow.App
 						var me = sp.GetRequiredService<ILocalIdentity>();
 						// Use the same tcp port you advertise in discovery for now.
 						// If your identity has a configured port, use it.
-						return new PairingListener(me, port: 49800);
+						return new PairingListener(me);
 					});
-					services.AddHostedService<PairingHostedService>();
-
+					services.AddSingleton<TcpMuxHost>(sp =>
+					{
+						var port = 49800;
+						return new TcpMuxHost(port);
+					});
+					services.AddSingleton<ConnectionManager>(); services.AddSingleton<PairingListener>();     // handler only now
+					services.AddSingleton<ConnectionManager>();   // handler + outgoing connect
+					services.AddHostedService<TcpMuxHostedService>();
 				});
 
 		public static AppBuilder BuildAvaloniaApp()
