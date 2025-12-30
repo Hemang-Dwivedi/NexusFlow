@@ -24,7 +24,8 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 	private readonly IPairingDialogService _dialogs;
 	private readonly TrustStore _trustStore;
 	public ObservableCollection<PeerRowViewModel> Peers { get; } = new();
-
+	private readonly HashSet<string> _trustedPeerIds = new();
+	public bool HasPeers => Peers.Count > 0;
 
 	public PeersListViewModel(
 	   DiscoveryCoordinator discovery,
@@ -44,6 +45,7 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		Peers.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasPeers));
 
 		RefreshFromSnapshot();
+		LoadTrustCache();
 
 		_discovery.Registry.OnPeerDiscovered += OnPeerDiscovered;
 		_discovery.Registry.OnPeerUpdated += OnPeerUpdated;
@@ -52,8 +54,14 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		// Incoming pairing
 		_pairingListener.IncomingPairing += OnIncomingPairing;
 	}
+	private void LoadTrustCache()
+	{
+		_trustedPeerIds.Clear();
+		var state = _trustStore.Load();
+		foreach (var p in state.Peers)
+			_trustedPeerIds.Add(p.PeerId);
+	}
 
-	public bool HasPeers => Peers.Count > 0;
 	private void AddOrUpdatePeer(DiscoveredPeer peer)
 	{
 		Dispatcher.UIThread.Post(() =>
@@ -71,7 +79,8 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 				peer.DeviceName,
 				peer.TcpPort,
 				peer.LastSeen,
-				peer.LastKnownAddress
+				peer.LastKnownAddress,
+				_trustedPeerIds.Contains(peer.PeerId)
 			);
 
 			_peerIndex[peer.PeerId] = row;
@@ -121,9 +130,19 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 		if (acceptedLocal && acceptedRemote)
 		{
 			PersistTrust(session.RemotePeerId, session.RemoteDeviceName, session.Fingerprint);
+			_trustedPeerIds.Add(session.RemotePeerId);
+			MarkRowTrusted(session.RemotePeerId, true);
 		}
 
 		session.Close();
+	}
+	private void MarkRowTrusted(string peerId, bool trusted)
+	{
+		Dispatcher.UIThread.Post(() =>
+		{
+			var row = Peers.FirstOrDefault(x => x.PeerId == peerId);
+			if (row != null) row.IsTrusted = trusted;
+		});
 	}
 
 	private async void OnIncomingPairing(IncomingPairingSession s)
@@ -176,7 +195,7 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 			foreach (var p in snapshot)
 			{
 				if (p.LastKnownAddress is null) continue;
-				Peers.Add(new PeerRowViewModel(p.PeerId, p.DeviceName, p.TcpPort, p.LastSeen, p.LastKnownAddress));
+				Peers.Add(new PeerRowViewModel(p.PeerId, p.DeviceName, p.TcpPort, p.LastSeen, p.LastKnownAddress, _trustedPeerIds.Contains(p.PeerId)));
 			}
 		});
 	}

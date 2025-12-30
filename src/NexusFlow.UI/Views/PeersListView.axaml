@@ -55,6 +55,7 @@
     <dg:DataGridTextColumn Header="TCP"
                            Binding="{Binding TcpPort}"
                            Width="*" />
+    <dg:DataGridTextColumn Header="Trusted" Binding="{Binding IsTrusted}" Width="*" />
 
     <!-- Action button -->
     <dg:DataGridTemplateColumn Header="Action"
@@ -65,7 +66,8 @@
                   Padding="6,2"
                   Command="{Binding DataContext.PairCommand,
                                     RelativeSource={RelativeSource AncestorType=UserControl}}"
-                  CommandParameter="{Binding}" />
+                  CommandParameter="{Binding}"
+                   IsEnabled="{Binding !IsTrusted}"/>
         </DataTemplate>
       </dg:DataGridTemplateColumn.CellTemplate>
     </dg:DataGridTemplateColumn>
