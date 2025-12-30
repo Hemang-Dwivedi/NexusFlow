@@ -68,7 +68,7 @@ public sealed class PairingListener : IDisposable
 
 	private async Task HandleClientAsync(TcpClient client, CancellationToken ct)
 	{
-		using var _ = client;
+		var _ = client;
 		using var ecdh = Ecdh.Create();
 		var nonce = RandomNumberGenerator.GetBytes(16);
 
@@ -124,8 +124,9 @@ public sealed class PairingListener : IDisposable
 			initiatorHello.DeviceName,
 			code,
 			fingerprint,
-			stream
+			client
 		));
+
 
 		// Note: stream stays open; IncomingPairingSession controls decision exchange.
 		// We don't dispose stream here.
@@ -137,6 +138,7 @@ public sealed class PairingListener : IDisposable
 
 public sealed class IncomingPairingSession
 {
+	private readonly TcpClient _client;
 	public Guid SessionId { get; }
 	public string RemotePeerId { get; }
 	public string RemoteDeviceName { get; }
@@ -145,14 +147,15 @@ public sealed class IncomingPairingSession
 
 	private readonly NetworkStream _stream;
 
-	internal IncomingPairingSession(Guid id, string remotePeerId, string remoteName, string code, string fingerprint, NetworkStream stream)
+	internal IncomingPairingSession(Guid id, string remotePeerId, string remoteName, string code, string fingerprint, TcpClient client)
 	{
 		SessionId = id;
 		RemotePeerId = remotePeerId;
 		RemoteDeviceName = remoteName;
 		Code6Digits = code;
 		Fingerprint = fingerprint;
-		_stream = stream;
+		_stream = client.GetStream();
+		_client = client;
 	}
 
 	public Task SendDecisionAsync(bool accepted, CancellationToken ct)
@@ -161,6 +164,11 @@ public sealed class IncomingPairingSession
 	public async Task<PairingDecision> WaitDecisionAsync(CancellationToken ct)
 	{
 		var bytes = await Framing.ReadFrameAsync(_stream, ct);
-		return PairingCodec.Decode<PairingDecision>(bytes) ?? throw new InvalidOperationException("Invalid decision.");
+		return PairingCodec.Decode<PairingDecision>(bytes) ?? throw new InvalidOperationException();
+	}
+
+	public void Close()
+	{
+		try { _client.Close(); } catch { }
 	}
 }

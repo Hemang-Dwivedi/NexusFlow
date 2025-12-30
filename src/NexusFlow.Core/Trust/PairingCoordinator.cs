@@ -32,9 +32,9 @@ public sealed class PairingCoordinator
 			ProtocolVersion: 1
 		);
 
-		using var client = new TcpClient(AddressFamily.InterNetwork);
+		var client = new TcpClient(AddressFamily.InterNetwork);
 		await client.ConnectAsync(peerAddress, peerPort, ct);
-		using var stream = client.GetStream();
+		var stream = client.GetStream();
 
 		await Framing.WriteFrameAsync(stream, PairingCodec.Encode(hello), ct);
 

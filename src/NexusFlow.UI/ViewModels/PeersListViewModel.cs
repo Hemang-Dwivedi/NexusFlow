@@ -143,6 +143,7 @@ public sealed partial class PeersListViewModel : ObservableObject, IDisposable
 			{
 				PersistTrust(s.RemotePeerId, s.RemoteDeviceName, s.Fingerprint);
 			}
+			s.Close();
 		});
 	}
 
