@@ -22,6 +22,7 @@ public sealed class RoutingWireupHostedService : IHostedService
 	{
 		_cm.ControlMessageReceived += OnControlPayload;
 		_cm.PeerConnected += OnPeerConnected;
+		_cm.PeerDisconnected += OnPeerDisconnected;
 		return Task.CompletedTask;
 	}
 
@@ -29,47 +30,60 @@ public sealed class RoutingWireupHostedService : IHostedService
 	{
 		_cm.ControlMessageReceived -= OnControlPayload;
 		_cm.PeerConnected -= OnPeerConnected;
+		_cm.PeerDisconnected -= OnPeerDisconnected;
 		return Task.CompletedTask;
 	}
 
-	private void OnControlPayload(string peerId, byte[] payload)
+	private void OnControlPayload(string fromPeerId, byte[] payload)
 	{
 		var typeName = ControlCodec.PeekType(payload);
 
-		if (typeName == nameof(SetActiveTarget))
+		if (typeName == nameof(SetActiveTargetV2))
 		{
-			var msg = ControlCodec.Decode<SetActiveTarget>(payload);
-			if (msg is not null) _routing.ApplyRemote(msg);
+			var msg = ControlCodec.Decode<SetActiveTargetV2>(payload);
+			if (msg is not null) _routing.ApplyRemoteV2(msg);
 			return;
 		}
 
-		if (typeName == nameof(SetActiveSource))
+		if (typeName == nameof(SetActiveSourceV2))
 		{
-			var msg = ControlCodec.Decode<SetActiveSource>(payload);
-			if (msg is not null) _routing.ApplyRemote(msg);
+			var msg = ControlCodec.Decode<SetActiveSourceV2>(payload);
+			if (msg is not null) _routing.ApplyRemoteV2(msg);
 			return;
 		}
 
-		if (typeName == nameof(RoutingStateSync))
+		if (typeName == nameof(RoutingStateSyncV2))
 		{
-			var msg = ControlCodec.Decode<RoutingStateSync>(payload);
-			if (msg is not null) _routing.ApplyRemote(msg);
+			var msg = ControlCodec.Decode<RoutingStateSyncV2>(payload);
+			if (msg is not null) _routing.ApplyRemoteV2(msg);
 			return;
 		}
 
-		// ignore other control messages here (Ping/Pong are handled inside ConnectionManager)
+		// ignore other control messages
 	}
 
 	private async void OnPeerConnected(ConnectedPeer peer)
 	{
 		try
 		{
-			var (t, s) = _routing.GetSnapshot();
-			await _cm.SendToPeerAsync(peer.PeerId, new RoutingStateSync(t, s));
+			var snap = _routing.GetSnapshotV2();
+			await _cm.SendToPeerAsync(
+				peer.PeerId,
+				new RoutingStateSyncV2(
+					snap.ActiveTargetPeerId, snap.TargetStamp,
+					snap.ActiveSourcePeerId, snap.SourceStamp
+				)
+			).ConfigureAwait(false);
 		}
-		catch
+		catch { }
+	}
+
+	private async void OnPeerDisconnected(string peerId)
+	{
+		try
 		{
-			// ignore; disconnect cleanup elsewhere
+			await _routing.HandlePeerDisconnectedAsync(peerId).ConfigureAwait(false);
 		}
+		catch { }
 	}
 }

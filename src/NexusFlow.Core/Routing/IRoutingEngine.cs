@@ -11,6 +11,10 @@ public interface IRoutingEngine
 	Task RequestSetActiveTargetAsync(string targetPeerId, CancellationToken ct = default);
 	Task RequestSetActiveSourceAsync(string sourcePeerId, CancellationToken ct = default);
 
-	(string ActiveTargetPeerId, string ActiveSourcePeerId) GetSnapshot();
-	void ApplyRemote(object msg);
+	// V2 helpers
+	(string ActiveTargetPeerId, NexusFlow.Protocol.Control.LamportStamp TargetStamp,
+	 string ActiveSourcePeerId, NexusFlow.Protocol.Control.LamportStamp SourceStamp) GetSnapshotV2();
+
+	void ApplyRemoteV2(object msg);
+	Task HandlePeerDisconnectedAsync(string peerId, CancellationToken ct = default);
 }

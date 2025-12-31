@@ -101,6 +101,9 @@ namespace NexusFlow.App
 						return new RoutingEngine(me.PeerId, control);
 					});
 
+					services.AddHostedService<RoutingWireupHostedService>();
+
+
 
 					// ---------- UI: Connected peer snapshot for Diagnostics ----------
 					services.AddSingleton<IConnectedPeersSnapshot, ConnectedPeersSnapshot>();
@@ -116,8 +119,6 @@ namespace NexusFlow.App
 					services.AddSingleton<PeersListViewModel>();        // assumes it resolves its own deps via DI
 					services.AddSingleton<DiagnosticsViewModel>();
 					services.AddSingleton<MainViewModel>();
-
-					services.AddHostedService<RoutingWireupHostedService>();
 
 					// ---------- Window ----------
 					services.AddSingleton<MainWindow>();
