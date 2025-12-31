@@ -106,10 +106,6 @@ namespace NexusFlow.App
 					services.AddHostedService<RoutingWireupHostedService>();
 
 
-
-					services.AddHostedService<RoutingWireupHostedService>();
-
-
 					services.AddSingleton<NexusFlow.Core.Diagnostics.IDiagnosticsLog, NexusFlow.Core.Diagnostics.DiagnosticsLogService>();
 					services.AddSingleton<NexusFlow.Core.Services.IFailsafeService, NexusFlow.Core.Services.FailsafeService>();
 
@@ -130,6 +126,13 @@ namespace NexusFlow.App
 
 					// ---------- Window ----------
 					services.AddSingleton<MainWindow>();
+
+					// NexusFlow.Input
+					services.AddSingleton<NexusFlow.Input.GlobalHotkeyListener>();
+
+					// Hosted service
+					services.AddHostedService<NexusFlow.App.Services.FailsafeHotkeyHostedService>();
+
 				});
 
 

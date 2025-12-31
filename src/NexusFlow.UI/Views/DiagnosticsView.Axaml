@@ -29,14 +29,12 @@
 
         <TextBlock Text="Target" />
         <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
-                  SelectedItem="{Binding SelectedTargetItem, Mode=TwoWay}"
-                  DisplayMemberBinding="{Binding Item2}" />
+                  SelectedItem="{Binding SelectedTargetItem, Mode=TwoWay}" />
         <Button Content="Set Target" Command="{Binding SetTargetCommand}" />
 
         <TextBlock Text="Source" Margin="0,8,0,0"/>
         <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
-                  SelectedItem="{Binding SelectedSourceItem, Mode=TwoWay}"
-                  DisplayMemberBinding="{Binding Item2}" />
+                  SelectedItem="{Binding SelectedSourceItem, Mode=TwoWay}"/>
         <Button Content="Set Source" Command="{Binding SetSourceCommand}" />
 
         <Button Content="Set Both = Self" Command="{Binding SetSelfCommand}" Margin="0,8,0,0"/>

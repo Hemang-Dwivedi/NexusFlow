@@ -81,17 +81,6 @@
     </DataTemplate>
   </dg:DataGridTemplateColumn.CellTemplate>
 </dg:DataGridTemplateColumn>
-
-    <!-- Action button -->
-    <dg:DataGridTemplateColumn Header="Action"
-                               Width="*">
-      <dg:DataGridTemplateColumn.CellTemplate>
-        <DataTemplate x:DataType="vm:PeerRowViewModel">
-         
-        </DataTemplate>
-      </dg:DataGridTemplateColumn.CellTemplate>
-    </dg:DataGridTemplateColumn>
-
   </dg:DataGrid.Columns>
 </dg:DataGrid>
 
