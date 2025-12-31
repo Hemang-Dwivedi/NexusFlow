@@ -1,4 +1,6 @@
-﻿namespace NexusFlow.Core.Routing;
+﻿using NexusFlow.Protocol.Control;
+
+namespace NexusFlow.Core.Routing;
 
 public interface IRoutingEngine
 {
@@ -11,10 +13,9 @@ public interface IRoutingEngine
 	Task RequestSetActiveTargetAsync(string targetPeerId, CancellationToken ct = default);
 	Task RequestSetActiveSourceAsync(string sourcePeerId, CancellationToken ct = default);
 
-	// V2 helpers
-	(string ActiveTargetPeerId, NexusFlow.Protocol.Control.LamportStamp TargetStamp,
-	 string ActiveSourcePeerId, NexusFlow.Protocol.Control.LamportStamp SourceStamp) GetSnapshotV2();
+	(string ActiveTargetPeerId, LamportStamp TargetStamp,
+	 string ActiveSourcePeerId, LamportStamp SourceStamp) GetSnapshotV2();
 
-	void ApplyRemoteV2(object msg);
+	RoutingApplyResult TryApplyRemoteV2(object msg);
 	Task HandlePeerDisconnectedAsync(string peerId, CancellationToken ct = default);
 }

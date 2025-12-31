@@ -15,22 +15,55 @@
 
     <Border Padding="12" CornerRadius="8">
       <StackPanel Spacing="8">
+        <TextBlock Text="Failsafe (local-only)" FontSize="16"/>
+        <TextBlock Text="{Binding IsFailsafeBlocked, StringFormat=Blocked: {0}}" />
+        <Button Content="Toggle Failsafe" Command="{Binding ToggleFailsafeCommand}" />
+        <TextBlock Text="Note: Shift+Esc global hotkey comes later (NexusFlow.Input). This button is the same action."
+                   Opacity="0.7" TextWrapping="Wrap"/>
+      </StackPanel>
+    </Border>
+
+    <Border Padding="12" CornerRadius="8">
+      <StackPanel Spacing="8">
         <TextBlock Text="Manual Switch (temporary)" FontSize="16"/>
 
         <TextBlock Text="Target" />
         <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
-                  SelectedItem="{Binding SelectedTargetItem, Mode=TwoWay}"/>
-
+                  SelectedItem="{Binding SelectedTargetItem, Mode=TwoWay}"
+                  DisplayMemberBinding="{Binding Item2}" />
         <Button Content="Set Target" Command="{Binding SetTargetCommand}" />
-          <TextBlock Text="{Binding SelectedTargetItem.PeerId, StringFormat=Selected Target PeerId: {0}}" />
 
         <TextBlock Text="Source" Margin="0,8,0,0"/>
         <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
-                  SelectedItem="{Binding SelectedSourceItem, Mode=TwoWay}" />
-
+                  SelectedItem="{Binding SelectedSourceItem, Mode=TwoWay}"
+                  DisplayMemberBinding="{Binding Item2}" />
         <Button Content="Set Source" Command="{Binding SetSourceCommand}" />
 
         <Button Content="Set Both = Self" Command="{Binding SetSelfCommand}" Margin="0,8,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <Border Padding="12" CornerRadius="8">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Event Log (latest at bottom)" FontSize="16"/>
+        <ScrollViewer Height="220">
+          <ItemsControl ItemsSource="{Binding Logs}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock>
+                    <Run Text="[" />
+                    <Run Text="{Binding Timestamp, StringFormat={}{0:HH:mm:ss}}" />
+                    <Run Text="] " />
+                    <Run Text="{Binding Level}" />
+                    <Run Text=" " />
+                    <Run Text="{Binding Category}" />
+                    <Run Text=": " />
+                    <Run Text="{Binding Message}" />
+                  </TextBlock>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
       </StackPanel>
     </Border>
 

@@ -279,11 +279,7 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable
 			Disconnect(id);
 	}
 
-	public async Task SendRoutingStateSyncAsync(string peerId, IRoutingEngine routing, CancellationToken ct)
-	{
-		var (t, s) = routing.GetSnapshot();
-		await SendToPeerAsync(peerId, new RoutingStateSync(t, s), ct).ConfigureAwait(false);
-	}
+	
 
 }
 

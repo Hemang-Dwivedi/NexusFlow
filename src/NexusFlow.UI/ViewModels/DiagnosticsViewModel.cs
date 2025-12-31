@@ -1,6 +1,9 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using NexusFlow.Core.Diagnostics;
 using NexusFlow.Core.Routing;
+using NexusFlow.Core.Services;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 
@@ -9,11 +12,15 @@ namespace NexusFlow.UI.ViewModels;
 public sealed partial class DiagnosticsViewModel : ObservableObject
 {
 	private readonly IRoutingEngine _routing;
+	private readonly IDiagnosticsLog _log;
+	private readonly IFailsafeService _failsafe;
 
-	public DiagnosticsViewModel(IRoutingEngine routing, IConnectedPeersSnapshot peers)
+	public DiagnosticsViewModel(IRoutingEngine routing, IConnectedPeersSnapshot peers, IDiagnosticsLog log, IFailsafeService failsafe)
 	{
 		_routing = routing;
 		Peers = peers;
+		_log = log;
+		_failsafe = failsafe;
 
 		ActiveTargetPeerId = _routing.ActiveTargetPeerId;
 		ActiveSourcePeerId = _routing.ActiveSourcePeerId;
@@ -21,17 +28,28 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_routing.ActiveTargetChanged += (_, id) => ActiveTargetPeerId = id;
 		_routing.ActiveSourceChanged += (_, id) => ActiveSourcePeerId = id;
 
-		// Default selections
+		IsFailsafeBlocked = _failsafe.IsBlocked;
+		_failsafe.Changed += b => Dispatcher.UIThread.Post(() => IsFailsafeBlocked = b);
+
+		// seed logs
+		foreach (var e in _log.Snapshot())
+			Logs.Add(e);
+
+		_log.Added += e => Dispatcher.UIThread.Post(() => Logs.Add(e));
+
 		SelectedTargetItem = FindByPeerId(Peers.LocalPeerId);
 		SelectedSourceItem = FindByPeerId(Peers.LocalPeerId);
 	}
 
 	public IConnectedPeersSnapshot Peers { get; }
 
+	public ObservableCollection<LogEntry> Logs { get; } = new();
+
 	[ObservableProperty] private string _activeTargetPeerId = "";
 	[ObservableProperty] private string _activeSourcePeerId = "";
 
-	// Bind ComboBox SelectedItem to these (NOT SelectedValuePath)
+	[ObservableProperty] private bool _isFailsafeBlocked;
+
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedTargetItem;
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedSourceItem;
 
@@ -63,6 +81,9 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 			_routing.RequestSetActiveSourceAsync(self)
 		);
 	}
+
+	[RelayCommand]
+	private void ToggleFailsafe() => _failsafe.Toggle();
 
 	private (string PeerId, string DisplayName)? FindByPeerId(string peerId)
 	{

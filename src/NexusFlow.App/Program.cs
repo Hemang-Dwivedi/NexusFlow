@@ -97,13 +97,21 @@ namespace NexusFlow.App
 					services.AddSingleton<IRoutingEngine>(sp =>
 					{
 						var me = sp.GetRequiredService<ILocalIdentity>();
-						var control = sp.GetRequiredService<ConnectionManager>(); // implements IControlBroadcaster
-						return new RoutingEngine(me.PeerId, control);
+						var control = sp.GetRequiredService<ConnectionManager>(); // IControlBroadcaster
+						var failsafe = sp.GetRequiredService<NexusFlow.Core.Services.IFailsafeService>();
+						var log = sp.GetRequiredService<NexusFlow.Core.Diagnostics.IDiagnosticsLog>();
+						return new RoutingEngine(me.PeerId, control, failsafe, log);
 					});
 
 					services.AddHostedService<RoutingWireupHostedService>();
 
 
+
+					services.AddHostedService<RoutingWireupHostedService>();
+
+
+					services.AddSingleton<NexusFlow.Core.Diagnostics.IDiagnosticsLog, NexusFlow.Core.Diagnostics.DiagnosticsLogService>();
+					services.AddSingleton<NexusFlow.Core.Services.IFailsafeService, NexusFlow.Core.Services.FailsafeService>();
 
 					// ---------- UI: Connected peer snapshot for Diagnostics ----------
 					services.AddSingleton<IConnectedPeersSnapshot, ConnectedPeersSnapshot>();
