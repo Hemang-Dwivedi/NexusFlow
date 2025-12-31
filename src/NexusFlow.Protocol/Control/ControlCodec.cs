@@ -10,20 +10,31 @@ public static class ControlCodec
 		WriteIndented = false
 	};
 
-	// Wrap with a tiny envelope for type peek
-	private sealed record Envelope(string Type, JsonElement Body);
-
-	public static byte[] Encode<T>(T msg)
+	/// <summary>
+	/// Encode using the *runtime type* of the message so envelopes contain the correct Type.
+	/// </summary>
+	public static byte[] Encode(object msg)
 	{
-		var type = typeof(T).Name;
-		using var doc = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(msg, Opts));
+		if (msg is null) throw new ArgumentNullException(nameof(msg));
+
+		var runtimeType = msg.GetType();
+		var typeName = runtimeType.Name;
+
+		using var doc = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(msg, runtimeType, Opts));
+
 		var env = new Dictionary<string, object?>
 		{
-			["type"] = type,
+			["type"] = typeName,
 			["body"] = doc.RootElement
 		};
+
 		return JsonSerializer.SerializeToUtf8Bytes(env, Opts);
 	}
+
+	/// <summary>
+	/// Generic convenience overload (still uses runtime type correctly).
+	/// </summary>
+	public static byte[] Encode<T>(T msg) => Encode((object)msg!);
 
 	public static T? Decode<T>(byte[] payload)
 	{

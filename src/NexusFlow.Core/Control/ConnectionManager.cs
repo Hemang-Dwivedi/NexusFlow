@@ -28,8 +28,9 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable
 
 	public event Action<ConnectedPeer>? PeerConnected;
 	public event Action<string>? PeerDisconnected;
-	public event Action<string, int>? PeerRttUpdated;
-	public event Action<string, object>? ControlMessageReceived;
+	public event Action<string, int>? PeerRttUpdated; 
+	public event Action<string, byte[]>? ControlMessageReceived;
+
 
 
 	public ConnectionManager(ILocalIdentity me, TrustStore trustStore)

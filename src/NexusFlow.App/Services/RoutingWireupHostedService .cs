@@ -20,27 +20,44 @@ public sealed class RoutingWireupHostedService : IHostedService
 
 	public Task StartAsync(CancellationToken cancellationToken)
 	{
-		// Apply remote routing messages
-		_cm.ControlMessageReceived += OnControlMessage;
-
-		// On connect: push our current routing state to the peer (heals missed updates)
+		_cm.ControlMessageReceived += OnControlPayload;
 		_cm.PeerConnected += OnPeerConnected;
-
 		return Task.CompletedTask;
 	}
 
 	public Task StopAsync(CancellationToken cancellationToken)
 	{
-		_cm.ControlMessageReceived -= OnControlMessage;
+		_cm.ControlMessageReceived -= OnControlPayload;
 		_cm.PeerConnected -= OnPeerConnected;
 		return Task.CompletedTask;
 	}
 
-	private void OnControlMessage(string peerId, object msg)
+	private void OnControlPayload(string peerId, byte[] payload)
 	{
-		// Only accept routing-related messages
-		if (msg is SetActiveTarget or SetActiveSource or RoutingStateSync)
-			_routing.ApplyRemote(msg);
+		var typeName = ControlCodec.PeekType(payload);
+
+		if (typeName == nameof(SetActiveTarget))
+		{
+			var msg = ControlCodec.Decode<SetActiveTarget>(payload);
+			if (msg is not null) _routing.ApplyRemote(msg);
+			return;
+		}
+
+		if (typeName == nameof(SetActiveSource))
+		{
+			var msg = ControlCodec.Decode<SetActiveSource>(payload);
+			if (msg is not null) _routing.ApplyRemote(msg);
+			return;
+		}
+
+		if (typeName == nameof(RoutingStateSync))
+		{
+			var msg = ControlCodec.Decode<RoutingStateSync>(payload);
+			if (msg is not null) _routing.ApplyRemote(msg);
+			return;
+		}
+
+		// ignore other control messages here (Ping/Pong are handled inside ConnectionManager)
 	}
 
 	private async void OnPeerConnected(ConnectedPeer peer)
@@ -52,7 +69,7 @@ public sealed class RoutingWireupHostedService : IHostedService
 		}
 		catch
 		{
-			// ignore; disconnect cleanup will happen elsewhere
+			// ignore; disconnect cleanup elsewhere
 		}
 	}
 }
