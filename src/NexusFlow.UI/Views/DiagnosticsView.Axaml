@@ -18,16 +18,15 @@
         <TextBlock Text="Manual Switch (temporary)" FontSize="16"/>
 
         <TextBlock Text="Target" />
-        <ComboBox ItemsSource="{Binding PeerOptions}"
-                  SelectedItem="{Binding SelectedTarget, Mode=TwoWay}"
-                  DisplayMemberBinding="{Binding DisplayName}" />
+        <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
+                  SelectedItem="{Binding SelectedTargetItem, Mode=TwoWay}"/>
 
         <Button Content="Set Target" Command="{Binding SetTargetCommand}" />
+          <TextBlock Text="{Binding SelectedTargetItem.PeerId, StringFormat=Selected Target PeerId: {0}}" />
 
         <TextBlock Text="Source" Margin="0,8,0,0"/>
-        <ComboBox ItemsSource="{Binding PeerOptions}"
-                  SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
-                  DisplayMemberBinding="{Binding DisplayName}" />
+        <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
+                  SelectedItem="{Binding SelectedSourceItem, Mode=TwoWay}" />
 
         <Button Content="Set Source" Command="{Binding SetSourceCommand}" />
 

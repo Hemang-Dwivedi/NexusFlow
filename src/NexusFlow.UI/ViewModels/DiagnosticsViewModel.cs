@@ -21,9 +21,9 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_routing.ActiveTargetChanged += (_, id) => ActiveTargetPeerId = id;
 		_routing.ActiveSourceChanged += (_, id) => ActiveSourcePeerId = id;
 
-		// sensible defaults for combo selection
-		SelectedTargetPeerId = Peers.LocalPeerId;
-		SelectedSourcePeerId = Peers.LocalPeerId;
+		// Default selections
+		SelectedTargetItem = FindByPeerId(Peers.LocalPeerId);
+		SelectedSourceItem = FindByPeerId(Peers.LocalPeerId);
 	}
 
 	public IConnectedPeersSnapshot Peers { get; }
@@ -31,25 +31,44 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	[ObservableProperty] private string _activeTargetPeerId = "";
 	[ObservableProperty] private string _activeSourcePeerId = "";
 
-	[ObservableProperty] private string _selectedTargetPeerId = "";
-	[ObservableProperty] private string _selectedSourcePeerId = "";
+	// Bind ComboBox SelectedItem to these (NOT SelectedValuePath)
+	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedTargetItem;
+	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedSourceItem;
 
 	[RelayCommand]
-	private Task SetTargetAsync() => _routing.RequestSetActiveTargetAsync(SelectedTargetPeerId);
+	private Task SetTargetAsync()
+	{
+		var id = SelectedTargetItem?.PeerId ?? "";
+		if (string.IsNullOrWhiteSpace(id)) return Task.CompletedTask;
+		return _routing.RequestSetActiveTargetAsync(id);
+	}
 
 	[RelayCommand]
-	private Task SetSourceAsync() => _routing.RequestSetActiveSourceAsync(SelectedSourcePeerId);
+	private Task SetSourceAsync()
+	{
+		var id = SelectedSourceItem?.PeerId ?? "";
+		if (string.IsNullOrWhiteSpace(id)) return Task.CompletedTask;
+		return _routing.RequestSetActiveSourceAsync(id);
+	}
 
 	[RelayCommand]
 	private Task SetSelfAsync()
 	{
 		var self = Peers.LocalPeerId;
-		SelectedTargetPeerId = self;
-		SelectedSourcePeerId = self;
+		SelectedTargetItem = FindByPeerId(self);
+		SelectedSourceItem = FindByPeerId(self);
+
 		return Task.WhenAll(
 			_routing.RequestSetActiveTargetAsync(self),
 			_routing.RequestSetActiveSourceAsync(self)
 		);
+	}
+
+	private (string PeerId, string DisplayName)? FindByPeerId(string peerId)
+	{
+		foreach (var p in Peers.ConnectedPeers)
+			if (p.PeerId == peerId) return p;
+		return null;
 	}
 }
 
