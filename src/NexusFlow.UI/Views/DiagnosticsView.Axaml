@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="NexusFlow.UI.Views.DiagnosticsView">
+  <StackPanel Spacing="12" Margin="16">
+
+    <TextBlock FontSize="18" Text="Diagnostics" />
+
+    <Border Padding="12" CornerRadius="8">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Routing State" FontSize="16"/>
+        <TextBlock Text="{Binding ActiveTargetPeerId, StringFormat=Active Target: {0}}" />
+        <TextBlock Text="{Binding ActiveSourcePeerId, StringFormat=Active Source: {0}}" />
+      </StackPanel>
+    </Border>
+
+    <Border Padding="12" CornerRadius="8">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Manual Switch (temporary)" FontSize="16"/>
+
+        <TextBlock Text="Target" />
+        <ComboBox ItemsSource="{Binding PeerOptions}"
+                  SelectedItem="{Binding SelectedTarget, Mode=TwoWay}"
+                  DisplayMemberBinding="{Binding DisplayName}" />
+
+        <Button Content="Set Target" Command="{Binding SetTargetCommand}" />
+
+        <TextBlock Text="Source" Margin="0,8,0,0"/>
+        <ComboBox ItemsSource="{Binding PeerOptions}"
+                  SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
+                  DisplayMemberBinding="{Binding DisplayName}" />
+
+        <Button Content="Set Source" Command="{Binding SetSourceCommand}" />
+
+        <Button Content="Set Both = Self" Command="{Binding SetSelfCommand}" Margin="0,8,0,0"/>
+      </StackPanel>
+    </Border>
+
+  </StackPanel>
+</UserControl>

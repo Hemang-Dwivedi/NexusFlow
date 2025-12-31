@@ -56,26 +56,42 @@
                            Binding="{Binding TcpPort}"
                            Width="*" />
     <dg:DataGridTextColumn Header="Trusted" Binding="{Binding IsTrusted}" Width="*" />
+      <dg:DataGridTextColumn Header="Conn" Binding="{Binding ConnectionLabel}" Width="*" />
+<dg:DataGridTextColumn Header="RTT" Binding="{Binding RttLabel}" Width="*" />
 
-    <dg:DataGridTextColumn Header="Conn" Binding="{Binding ConnectionLabel}" Width="*" />
-    <dg:DataGridTextColumn Header="RTT" Binding="{Binding RttLabel}" Width="*" />
+<dg:DataGridTemplateColumn Header="Actions" Width="2*">
+  <dg:DataGridTemplateColumn.CellTemplate>
+    <DataTemplate x:DataType="vm:PeerRowViewModel">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+           <Button Content="Pair"
+                  Padding="6,2"
+                  Command="{Binding DataContext.PairCommand,
+                                    RelativeSource={RelativeSource AncestorType=UserControl}}"
+                  CommandParameter="{Binding}"
+                   IsEnabled="{Binding !IsTrusted}"/>
+        <Button Content="Connect"
+                IsEnabled="{Binding IsTrusted}"
+                Command="{Binding DataContext.ConnectCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                CommandParameter="{Binding}" />
+        <Button Content="Disconnect"
+                IsEnabled="{Binding IsConnected}"
+                Command="{Binding DataContext.DisconnectCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                CommandParameter="{Binding}" />
+      </StackPanel>
+    </DataTemplate>
+  </dg:DataGridTemplateColumn.CellTemplate>
+</dg:DataGridTemplateColumn>
 
-    <dg:DataGridTemplateColumn Header="Actions" Width="2*">
-        <dg:DataGridTemplateColumn.CellTemplate>
+    <!-- Action button -->
+    <dg:DataGridTemplateColumn Header="Action"
+                               Width="*">
+      <dg:DataGridTemplateColumn.CellTemplate>
         <DataTemplate x:DataType="vm:PeerRowViewModel">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="Connect"
-                    IsEnabled="{Binding IsTrusted}"
-                    Command="{Binding DataContext.ConnectCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                    CommandParameter="{Binding}" />
-            <Button Content="Disconnect"
-                    IsEnabled="{Binding IsConnected}"
-                    Command="{Binding DataContext.DisconnectCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                    CommandParameter="{Binding}" />
-            </StackPanel>
+         
         </DataTemplate>
-        </dg:DataGridTemplateColumn.CellTemplate>
+      </dg:DataGridTemplateColumn.CellTemplate>
     </dg:DataGridTemplateColumn>
+
   </dg:DataGrid.Columns>
 </dg:DataGrid>
 
