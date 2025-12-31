@@ -134,6 +134,10 @@ namespace NexusFlow.App
 					services.AddHostedService<NexusFlow.App.Services.FailsafeHotkeyHostedService>();
 
 					services.AddSingleton<NexusFlow.Core.Input.IInputSourceSwitchingSimulator, NexusFlow.Core.Input.InputSourceSwitchingSimulator>();
+					services.AddSingleton<NexusFlow.Core.Input.IModifierStateTracker, NexusFlow.Core.Input.ModifierStateTracker>();
+					services.AddHostedService<NexusFlow.App.Services.ModifierFailsafeHostedService>();
+					services.AddSingleton<NexusFlow.Core.Input.IOrderedInputRouter, NexusFlow.Core.Input.OrderedInputRouter>();
+					services.AddHostedService<NexusFlow.App.Services.OrderedInputRouterHostedService>();
 
 
 				});
