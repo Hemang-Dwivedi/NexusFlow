@@ -6,6 +6,7 @@ using NexusFlow.Core.Routing;
 using NexusFlow.Core.Services;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using NexusFlow.Core.Input;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -14,13 +15,27 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	private readonly IRoutingEngine _routing;
 	private readonly IDiagnosticsLog _log;
 	private readonly IFailsafeService _failsafe;
+	private readonly IInputSourceSwitchingSimulator _inputSim;
 
-	public DiagnosticsViewModel(IRoutingEngine routing, IConnectedPeersSnapshot peers, IDiagnosticsLog log, IFailsafeService failsafe)
+	public DiagnosticsViewModel(
+	IRoutingEngine routing,
+	IConnectedPeersSnapshot peers,
+	IDiagnosticsLog log,
+	IFailsafeService failsafe,
+	IInputSourceSwitchingSimulator inputSim)
+
 	{
 		_routing = routing;
 		Peers = peers;
 		_log = log;
 		_failsafe = failsafe;
+		_inputSim = inputSim;
+		InputThresholdInfo = _inputSim.MovementThresholdInfo;
+
+		SelectedSimPeerItem = FindByPeerId(Peers.LocalPeerId);
+		MoveDx = 8;
+		MoveDy = 0;
+
 
 		ActiveTargetPeerId = _routing.ActiveTargetPeerId;
 		ActiveSourcePeerId = _routing.ActiveSourcePeerId;
@@ -52,6 +67,35 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedTargetItem;
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedSourceItem;
+	[ObservableProperty] private string _inputThresholdInfo = "";
+
+	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedSimPeerItem;
+
+	[ObservableProperty] private double _moveDx;
+	[ObservableProperty] private double _moveDy;
+
+	private string SimPeerIdOrSelf()
+		=> SelectedSimPeerItem?.PeerId ?? Peers.LocalPeerId;
+
+	[RelayCommand]
+	private Task SimKeyPressAsync()
+		=> _inputSim.SimKeyPressAsync(SimPeerIdOrSelf());
+
+	[RelayCommand]
+	private Task SimMouseClickAsync()
+		=> _inputSim.SimMouseClickAsync(SimPeerIdOrSelf());
+
+	[RelayCommand]
+	private Task SimMouseScrollAsync()
+		=> _inputSim.SimMouseScrollAsync(SimPeerIdOrSelf());
+
+	[RelayCommand]
+	private Task SimMouseMoveAsync()
+		=> _inputSim.SimMouseMoveAsync(SimPeerIdOrSelf(), MoveDx, MoveDy);
+
+	[RelayCommand]
+	private Task SimMicActivityAsync()
+		=> _inputSim.SimMicActivityAsync(SimPeerIdOrSelf());
 
 	[RelayCommand]
 	private Task SetTargetAsync()

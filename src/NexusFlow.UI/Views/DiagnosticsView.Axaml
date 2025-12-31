@@ -18,10 +18,35 @@
         <TextBlock Text="Failsafe (local-only)" FontSize="16"/>
         <TextBlock Text="{Binding IsFailsafeBlocked, StringFormat=Blocked: {0}}" />
         <Button Content="Toggle Failsafe" Command="{Binding ToggleFailsafeCommand}" />
-        <TextBlock Text="Note: Shift+Esc global hotkey comes later (NexusFlow.Input). This button is the same action."
-                   Opacity="0.7" TextWrapping="Wrap"/>
       </StackPanel>
     </Border>
+      <Border Padding="12" CornerRadius="8">
+  <StackPanel Spacing="8">
+    <TextBlock Text="Input Source Switching Simulator" FontSize="16"/>
+    <TextBlock Text="{Binding InputThresholdInfo}" Opacity="0.7"/>
+
+    <TextBlock Text="Simulate input coming from:" />
+    <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
+              SelectedItem="{Binding SelectedSimPeerItem, Mode=TwoWay}" />
+
+    <WrapPanel>
+      <Button Content="Key Press" Command="{Binding SimKeyPressCommand}" />
+      <Button Content="Mouse Click" Command="{Binding SimMouseClickCommand}" />
+      <Button Content="Mouse Scroll" Command="{Binding SimMouseScrollCommand}" />
+      <Button Content="Mic Activity" Command="{Binding SimMicActivityCommand}" />
+    </WrapPanel>
+
+    <TextBlock Text="Mouse Move (dx, dy) — switches only after threshold" Opacity="0.8"/>
+    <WrapPanel VerticalAlignment="Center">
+      <TextBlock Text="dx:" VerticalAlignment="Center"/>
+      <TextBox Width="80" Text="{Binding MoveDx, Mode=TwoWay}" />
+      <TextBlock Text="dy:" VerticalAlignment="Center"/>
+      <TextBox Width="80" Text="{Binding MoveDy, Mode=TwoWay}" />
+      <Button Content="Mouse Move" Command="{Binding SimMouseMoveCommand}" />
+    </WrapPanel>
+  </StackPanel>
+</Border>
+
 
     <Border Padding="12" CornerRadius="8">
       <StackPanel Spacing="8">

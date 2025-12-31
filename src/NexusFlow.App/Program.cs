@@ -133,6 +133,9 @@ namespace NexusFlow.App
 					// Hosted service
 					services.AddHostedService<NexusFlow.App.Services.FailsafeHotkeyHostedService>();
 
+					services.AddSingleton<NexusFlow.Core.Input.IInputSourceSwitchingSimulator, NexusFlow.Core.Input.InputSourceSwitchingSimulator>();
+
+
 				});
 
 
