@@ -135,6 +135,23 @@ namespace NexusFlow.App
 
 					services.AddSingleton<NexusFlow.Core.Input.IInputSourceSwitchingSimulator, NexusFlow.Core.Input.InputSourceSwitchingSimulator>();
 
+					// Capture
+					services.AddSingleton<NexusFlow.Input.IWinHookCaptureService, NexusFlow.Input.WinHookCaptureService>();
+					services.AddHostedService<NexusFlow.App.Hosted.LocalInputCaptureHostedService>();
+
+					// Orchestrator lives in Core
+					services.AddSingleton<RoutingEngine>(sp =>
+					{
+						var me = sp.GetRequiredService<ILocalIdentity>();
+						var control = sp.GetRequiredService<ConnectionManager>();
+						var failsafe = sp.GetRequiredService<NexusFlow.Core.Services.IFailsafeService>();
+						var log = sp.GetRequiredService<NexusFlow.Core.Diagnostics.IDiagnosticsLog>();
+						return new RoutingEngine(me.PeerId, control, failsafe, log);
+					});
+
+					// Make IRoutingEngine resolve to the same instance
+					services.AddSingleton<IRoutingEngine>(sp => sp.GetRequiredService<RoutingEngine>());
+					services.AddSingleton<NexusFlow.Core.Input.LocalInputCaptureOrchestrator>();
 
 				});
 

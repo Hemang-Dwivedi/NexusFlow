@@ -1,0 +1,273 @@
+﻿using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace NexusFlow.Input;
+
+/// <summary>
+/// Low-level Windows input capture (keyboard + mouse).
+/// Emits events but never blocks input (always calls CallNextHookEx).
+/// No injection. No routing. Pure capture.
+/// </summary>
+
+public interface IWinHookCaptureService
+{
+	event Action<CapturedKeyEvent>? Key;
+	event Action<CapturedMouseMoveEvent>? MouseMove;
+	event Action<CapturedMouseButtonEvent>? MouseButton;
+	event Action<CapturedMouseWheelEvent>? MouseWheel;
+
+	void Start();
+	void Stop();
+}
+
+public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
+{
+	private IntPtr _kbdHook = IntPtr.Zero;
+	private IntPtr _mouseHook = IntPtr.Zero;
+
+	private LowLevelKeyboardProc? _kbdProc;
+	private LowLevelMouseProc? _mouseProc;
+
+	private int _lastX;
+	private int _lastY;
+	private bool _hasLast;
+
+	public event Action<CapturedKeyEvent>? Key;
+	public event Action<CapturedMouseButtonEvent>? MouseButton;
+	public event Action<CapturedMouseMoveEvent>? MouseMove;
+	public event Action<CapturedMouseWheelEvent>? MouseWheel;
+
+	public void Start()
+	{
+		if (_kbdHook != IntPtr.Zero || _mouseHook != IntPtr.Zero) return;
+
+		_kbdProc = KbdHookCallback;
+		_mouseProc = MouseHookCallback;
+
+		var hMod = GetModuleHandle(null);
+
+		_kbdHook = SetWindowsHookEx(WH_KEYBOARD_LL, _kbdProc, hMod, 0);
+		if (_kbdHook == IntPtr.Zero)
+			throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install WH_KEYBOARD_LL.");
+
+		_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, hMod, 0);
+		if (_mouseHook == IntPtr.Zero)
+			throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install WH_MOUSE_LL.");
+
+		_hasLast = false;
+	}
+
+	public void Stop()
+	{
+		if (_kbdHook != IntPtr.Zero)
+		{
+			UnhookWindowsHookEx(_kbdHook);
+			_kbdHook = IntPtr.Zero;
+		}
+
+		if (_mouseHook != IntPtr.Zero)
+		{
+			UnhookWindowsHookEx(_mouseHook);
+			_mouseHook = IntPtr.Zero;
+		}
+
+		_kbdProc = null;
+		_mouseProc = null;
+
+		_hasLast = false;
+	}
+
+	public void Dispose() => Stop();
+
+	private IntPtr KbdHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+	{
+		try
+		{
+			if (nCode >= 0)
+			{
+				var msg = (KeyboardMessage)wParam;
+				if (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN or
+					KeyboardMessage.WM_KEYUP or KeyboardMessage.WM_SYSKEYUP)
+				{
+					var kb = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+
+					var action = (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN)
+						? CapturedKeyAction.Down
+						: CapturedKeyAction.Up;
+
+					Key?.Invoke(new CapturedKeyEvent(
+						VkCode: kb.vkCode,
+						ScanCode: kb.scanCode,
+						Action: action,
+						TimestampUtcTicks: DateTime.UtcNow.Ticks
+					));
+				}
+			}
+		}
+		catch
+		{
+			// swallow - never break global input
+		}
+
+		return CallNextHookEx(_kbdHook, nCode, wParam, lParam);
+	}
+
+	private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+	{
+		try
+		{
+			if (nCode >= 0)
+			{
+				var msg = (MouseMessage)wParam;
+				var ms = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+
+				switch (msg)
+				{
+					case MouseMessage.WM_MOUSEMOVE:
+						{
+							var x = ms.pt.x;
+							var y = ms.pt.y;
+
+							if (!_hasLast)
+							{
+								_lastX = x; _lastY = y; _hasLast = true;
+								break;
+							}
+
+							var dx = x - _lastX;
+							var dy = y - _lastY;
+							_lastX = x; _lastY = y;
+
+							if (dx != 0 || dy != 0)
+							{
+								MouseMove?.Invoke(new CapturedMouseMoveEvent(
+									Dx: dx, Dy: dy,
+									X: x, Y: y,
+									TimestampUtcTicks: DateTime.UtcNow.Ticks
+								));
+							}
+
+							break;
+						}
+
+					case MouseMessage.WM_LBUTTONDOWN:
+					case MouseMessage.WM_LBUTTONUP:
+					case MouseMessage.WM_RBUTTONDOWN:
+					case MouseMessage.WM_RBUTTONUP:
+					case MouseMessage.WM_MBUTTONDOWN:
+					case MouseMessage.WM_MBUTTONUP:
+						{
+							var (btn, act) = msg switch
+							{
+								MouseMessage.WM_LBUTTONDOWN => (CapturedMouseButton.Left, MouseButtonAction.Down),
+								MouseMessage.WM_LBUTTONUP => (CapturedMouseButton.Left, MouseButtonAction.Up),
+								MouseMessage.WM_RBUTTONDOWN => (CapturedMouseButton.Right, MouseButtonAction.Down),
+								MouseMessage.WM_RBUTTONUP => (CapturedMouseButton.Right, MouseButtonAction.Up),
+								MouseMessage.WM_MBUTTONDOWN => (CapturedMouseButton.Middle, MouseButtonAction.Down),
+								MouseMessage.WM_MBUTTONUP => (CapturedMouseButton.Middle, MouseButtonAction.Up),
+								_ => (CapturedMouseButton.Left, MouseButtonAction.Down)
+							};
+
+							MouseButton?.Invoke(new CapturedMouseButtonEvent(
+								Button: btn,
+								Action: act,
+								X: ms.pt.x,
+								Y: ms.pt.y,
+								TimestampUtcTicks: DateTime.UtcNow.Ticks
+							));
+
+
+							break;
+						}
+
+					case MouseMessage.WM_MOUSEWHEEL:
+						{
+							// High word of mouseData contains wheel delta (120 multiples)
+							var delta = (short)((ms.mouseData >> 16) & 0xFFFF);
+							MouseWheel?.Invoke(new CapturedMouseWheelEvent(
+								Delta: delta,
+								X: ms.pt.x,
+								Y: ms.pt.y,
+								TimestampUtcTicks: DateTime.UtcNow.Ticks
+							));
+
+							break;
+						}
+				}
+			}
+		}
+		catch
+		{
+			// swallow - never break global input
+		}
+
+		return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+	}
+
+
+	// ----------------- Win32 interop -----------------
+
+	private const int WH_KEYBOARD_LL = 13;
+	private const int WH_MOUSE_LL = 14;
+
+	private enum KeyboardMessage : int
+	{
+		WM_KEYDOWN = 0x0100,
+		WM_KEYUP = 0x0101,
+		WM_SYSKEYDOWN = 0x0104,
+		WM_SYSKEYUP = 0x0105
+	}
+
+	private enum MouseMessage : int
+	{
+		WM_MOUSEMOVE = 0x0200,
+		WM_LBUTTONDOWN = 0x0201,
+		WM_LBUTTONUP = 0x0202,
+		WM_RBUTTONDOWN = 0x0204,
+		WM_RBUTTONUP = 0x0205,
+		WM_MBUTTONDOWN = 0x0207,
+		WM_MBUTTONUP = 0x0208,
+		WM_MOUSEWHEEL = 0x020A
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct POINT { public int x; public int y; }
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct MSLLHOOKSTRUCT
+	{
+		public POINT pt;
+		public int mouseData;
+		public int flags;
+		public int time;
+		public IntPtr dwExtraInfo;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct KBDLLHOOKSTRUCT
+	{
+		public int vkCode;
+		public int scanCode;
+		public int flags;
+		public int time;
+		public IntPtr dwExtraInfo;
+	}
+
+	private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+	private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+	[DllImport("user32.dll")]
+	private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+	[DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+	private static extern IntPtr GetModuleHandle(string? lpModuleName);
+}

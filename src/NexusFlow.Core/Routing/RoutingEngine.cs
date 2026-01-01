@@ -68,65 +68,7 @@ public sealed class RoutingEngine : IRoutingEngine
 			return (_activeTarget, _targetStamp, _activeSource, _sourceStamp);
 	}
 
-	public async Task RequestSetActiveTargetAsync(string targetPeerId, CancellationToken ct = default)
-	{
-		if (_failsafe.IsBlocked && !string.Equals(targetPeerId, _localPeerId, StringComparison.Ordinal))
-		{
-			_log.Warn(Cat, $"Failsafe blocked: ignoring local SetActiveTarget -> {targetPeerId}");
-			return;
-		}
-
-		LamportStamp newStamp;
-		lock (_gate)
-		{
-			_lamport++;
-			newStamp = new LamportStamp(_lamport, _localPeerId);
-			_activeTarget = targetPeerId;
-			_targetStamp = newStamp;
-		}
-
-		ActiveTargetChanged?.Invoke(this, ActiveTargetPeerId);
-
-		if (_failsafe.IsBlocked)
-		{
-			// local-only behavior (do NOT affect other peers)
-			_log.Info(Cat, $"Failsafe blocked: applied local-only SetActiveTarget -> {_localPeerId}");
-			return;
-		}
-
-		_log.Info(Cat, $"TX SetActiveTargetV2 -> {targetPeerId} stamp={newStamp.Counter}@{newStamp.PeerId}");
-		await _control.BroadcastAsync(new SetActiveTargetV2(targetPeerId, newStamp), ct).ConfigureAwait(false);
-	}
-
-	public async Task RequestSetActiveSourceAsync(string sourcePeerId, CancellationToken ct = default)
-	{
-		if (_failsafe.IsBlocked && !string.Equals(sourcePeerId, _localPeerId, StringComparison.Ordinal))
-		{
-			_log.Warn(Cat, $"Failsafe blocked: ignoring local SetActiveSource -> {sourcePeerId}");
-			return;
-		}
-
-		LamportStamp newStamp;
-		lock (_gate)
-		{
-			_lamport++;
-			newStamp = new LamportStamp(_lamport, _localPeerId);
-			_activeSource = sourcePeerId;
-			_sourceStamp = newStamp;
-		}
-
-		ActiveSourceChanged?.Invoke(this, ActiveSourcePeerId);
-
-		if (_failsafe.IsBlocked)
-		{
-			_log.Info(Cat, $"Failsafe blocked: applied local-only SetActiveSource -> {_localPeerId}");
-			return;
-		}
-
-		_log.Info(Cat, $"TX SetActiveSourceV2 -> {sourcePeerId} stamp={newStamp.Counter}@{newStamp.PeerId}");
-		await _control.BroadcastAsync(new SetActiveSourceV2(sourcePeerId, newStamp), ct).ConfigureAwait(false);
-	}
-
+	
 	public RoutingApplyResult TryApplyRemoteV2(object msg)
 	{
 		if (_failsafe.IsBlocked)
@@ -226,4 +168,80 @@ public sealed class RoutingEngine : IRoutingEngine
 			ActiveSourceChanged?.Invoke(this, ActiveSourcePeerId);
 		}
 	}
+
+	// Add inside RoutingEngine (same file)
+
+	public Task SetActiveTargetLocalOnlyAsync(string targetPeerId, CancellationToken ct = default)
+		=> SetActiveTargetCoreAsync(targetPeerId, broadcast: false, ct);
+
+	public Task SetActiveSourceLocalOnlyAsync(string sourcePeerId, CancellationToken ct = default)
+		=> SetActiveSourceCoreAsync(sourcePeerId, broadcast: false, ct);
+
+	// Keep your existing methods, but forward them:
+	public Task RequestSetActiveTargetAsync(string targetPeerId, CancellationToken ct = default)
+		=> SetActiveTargetCoreAsync(targetPeerId, broadcast: true, ct);
+
+	public Task RequestSetActiveSourceAsync(string sourcePeerId, CancellationToken ct = default)
+		=> SetActiveSourceCoreAsync(sourcePeerId, broadcast: true, ct);
+
+	// New shared implementations (private)
+	private async Task SetActiveTargetCoreAsync(string targetPeerId, bool broadcast, CancellationToken ct)
+	{
+		if (_failsafe.IsBlocked && !string.Equals(targetPeerId, _localPeerId, StringComparison.Ordinal))
+		{
+			_log.Warn(Cat, $"Failsafe blocked: ignoring local SetActiveTarget -> {targetPeerId}");
+			return;
+		}
+
+		LamportStamp newStamp;
+		lock (_gate)
+		{
+			_lamport++;
+			newStamp = new LamportStamp(_lamport, _localPeerId);
+			_activeTarget = targetPeerId;
+			_targetStamp = newStamp;
+		}
+
+		ActiveTargetChanged?.Invoke(this, ActiveTargetPeerId);
+
+		// local-only or failsafe => no broadcast
+		if (!broadcast || _failsafe.IsBlocked)
+		{
+			_log.Info(Cat, $"Applied {(broadcast ? "failsafe-local" : "local-only")} SetActiveTarget -> {ActiveTargetPeerId}");
+			return;
+		}
+
+		_log.Info(Cat, $"TX SetActiveTargetV2 -> {targetPeerId} stamp={newStamp.Counter}@{newStamp.PeerId}");
+		await _control.BroadcastAsync(new SetActiveTargetV2(targetPeerId, newStamp), ct).ConfigureAwait(false);
+	}
+
+	private async Task SetActiveSourceCoreAsync(string sourcePeerId, bool broadcast, CancellationToken ct)
+	{
+		if (_failsafe.IsBlocked && !string.Equals(sourcePeerId, _localPeerId, StringComparison.Ordinal))
+		{
+			_log.Warn(Cat, $"Failsafe blocked: ignoring local SetActiveSource -> {sourcePeerId}");
+			return;
+		}
+
+		LamportStamp newStamp;
+		lock (_gate)
+		{
+			_lamport++;
+			newStamp = new LamportStamp(_lamport, _localPeerId);
+			_activeSource = sourcePeerId;
+			_sourceStamp = newStamp;
+		}
+
+		ActiveSourceChanged?.Invoke(this, ActiveSourcePeerId);
+
+		if (!broadcast || _failsafe.IsBlocked)
+		{
+			_log.Info(Cat, $"Applied {(broadcast ? "failsafe-local" : "local-only")} SetActiveSource -> {ActiveSourcePeerId}");
+			return;
+		}
+
+		_log.Info(Cat, $"TX SetActiveSourceV2 -> {sourcePeerId} stamp={newStamp.Counter}@{newStamp.PeerId}");
+		await _control.BroadcastAsync(new SetActiveSourceV2(sourcePeerId, newStamp), ct).ConfigureAwait(false);
+	}
+
 }

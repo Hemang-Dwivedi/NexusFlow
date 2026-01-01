@@ -16,6 +16,7 @@
 	<ItemGroup>
     <ProjectReference Include="..\NexusFlow.Core\NexusFlow.Core.csproj" />
     <ProjectReference Include="..\NexusFlow.Diagnostics\NexusFlow.Diagnostics.csproj" />
+    <ProjectReference Include="..\NexusFlow.Input\NexusFlow.Input.csproj" />
     <ProjectReference Include="..\NexusFlow.Settings\NexusFlow.Settings.csproj" />
   </ItemGroup>
 
