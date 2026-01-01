@@ -7,8 +7,6 @@ using NexusFlow.Core.Services;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using NexusFlow.Core.Input;
-using NexusFlow.Core.Input;
-using Avalonia.Threading;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -18,16 +16,13 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	private readonly IDiagnosticsLog _log;
 	private readonly IFailsafeService _failsafe;
 	private readonly IInputSourceSwitchingSimulator _inputSim;
-	private readonly IModifierStateTracker _mods;
-	private readonly IOrderedInputRouter _router;
+
 	public DiagnosticsViewModel(
 	IRoutingEngine routing,
 	IConnectedPeersSnapshot peers,
 	IDiagnosticsLog log,
 	IFailsafeService failsafe,
-	IInputSourceSwitchingSimulator inputSim,
-	IModifierStateTracker mods,
-	IOrderedInputRouter router)
+	IInputSourceSwitchingSimulator inputSim)
 
 	{
 		_routing = routing;
@@ -35,15 +30,6 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_log = log;
 		_failsafe = failsafe;
 		_inputSim = inputSim;
-		_mods = mods;
-		ModifierStateText = _mods.Current.ToString();
-
-		_mods.Changed += s => Dispatcher.UIThread.Post(() => ModifierStateText = s.ToString());
-
-		SelectedKeyPeerItem = FindByPeerId(Peers.LocalPeerId);
-		SelectedKey = KeyKind.Ctrl;
-		_seq = 0;
-
 		InputThresholdInfo = _inputSim.MovementThresholdInfo;
 
 		SelectedSimPeerItem = FindByPeerId(Peers.LocalPeerId);
@@ -68,7 +54,6 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 
 		SelectedTargetItem = FindByPeerId(Peers.LocalPeerId);
 		SelectedSourceItem = FindByPeerId(Peers.LocalPeerId);
-		_router = router;
 	}
 
 	public IConnectedPeersSnapshot Peers { get; }
@@ -89,21 +74,6 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	[ObservableProperty] private double _moveDx;
 	[ObservableProperty] private double _moveDy;
 
-	[ObservableProperty] private string _modifierStateText = "";
-
-	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedKeyPeerItem;
-
-	[ObservableProperty] private KeyKind _selectedKey = KeyKind.Ctrl;
-	private string KeyPeerIdOrSelf()
-	=> SelectedKeyPeerItem?.PeerId ?? Peers.LocalPeerId;
-
-	private SimKeyEvent NextEvent(KeyAction action)
-		=> new(++_seq, KeyPeerIdOrSelf(), SelectedKey, action, DateTimeOffset.Now);
-
-	private long _seq;
-	public IReadOnlyList<KeyKind> KeyOptions { get; } =
-		Enum.GetValues<KeyKind>().ToList();
-
 	private string SimPeerIdOrSelf()
 		=> SelectedSimPeerItem?.PeerId ?? Peers.LocalPeerId;
 
@@ -119,7 +89,10 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	private Task SimMouseScrollAsync()
 		=> _inputSim.SimMouseScrollAsync(SimPeerIdOrSelf());
 
-	
+	[RelayCommand]
+	private Task SimMouseMoveAsync()
+		=> _inputSim.SimMouseMoveAsync(SimPeerIdOrSelf(), MoveDx, MoveDy);
+
 	[RelayCommand]
 	private Task SimMicActivityAsync()
 		=> _inputSim.SimMicActivityAsync(SimPeerIdOrSelf());
@@ -155,32 +128,6 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 
 	[RelayCommand]
 	private void ToggleFailsafe() => _failsafe.Toggle();
-	[RelayCommand]
-	private void SimKeyDown()
-	{
-		var peer = SelectedSimPeerItem?.PeerId ?? Peers.LocalPeerId;
-		_router.EnqueueKey(peer, SelectedKey, KeyAction.Down);
-	}
-
-	[RelayCommand]
-	private void SimKeyUp()
-	{
-		var peer = SelectedSimPeerItem?.PeerId ?? Peers.LocalPeerId;
-		_router.EnqueueKey(peer, SelectedKey, KeyAction.Up);
-	}
-
-	[RelayCommand]
-	private void SimMouseMove()
-	{
-		var peer = SelectedSimPeerItem?.PeerId ?? Peers.LocalPeerId;
-		_router.EnqueueMouseMove(peer, MoveDx, MoveDy);
-	}
-
-	[RelayCommand]
-	private void ResetModifiers()
-	{
-		_mods.Reset("Manual reset");
-	}
 
 	private (string PeerId, string DisplayName)? FindByPeerId(string peerId)
 	{

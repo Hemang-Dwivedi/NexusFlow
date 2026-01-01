@@ -46,29 +46,6 @@
     </WrapPanel>
   </StackPanel>
 </Border>
-      <Border Padding="12" CornerRadius="8">
-  <StackPanel Spacing="8">
-    <TextBlock Text="Modifier State Model (simulated)" FontSize="16"/>
-    <TextBlock Text="{Binding ModifierStateText, StringFormat=Current: {0}}" Opacity="0.8"/>
-
-    <TextBlock Text="Simulate key events from:" />
-    <ComboBox ItemsSource="{Binding Peers.ConnectedPeers}"
-              SelectedItem="{Binding SelectedKeyPeerItem, Mode=TwoWay}" />
-
-    <TextBlock Text="Key:" />
-    <ComboBox ItemsSource="{Binding KeyOptions}"
-              SelectedItem="{Binding SelectedKey, Mode=TwoWay}" />
-
-    <WrapPanel>
-      <Button Content="Key Down" Command="{Binding SimKeyDownCommand}" />
-      <Button Content="Key Up" Command="{Binding SimKeyUpCommand}" />
-      <Button Content="Reset Modifiers" Command="{Binding ResetModifiersCommand}" />
-    </WrapPanel>
-
-    <TextBlock Text="Rule: Key Down also switches ActiveSource immediately."
-               Opacity="0.7" TextWrapping="Wrap"/>
-  </StackPanel>
-</Border>
 
 
     <Border Padding="12" CornerRadius="8">
