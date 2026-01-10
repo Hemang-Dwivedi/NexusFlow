@@ -152,6 +152,16 @@ namespace NexusFlow.App
 					// Make IRoutingEngine resolve to the same instance
 					services.AddSingleton<IRoutingEngine>(sp => sp.GetRequiredService<RoutingEngine>());
 					services.AddSingleton<NexusFlow.Core.Input.LocalInputCaptureOrchestrator>();
+					services.AddSingleton<NexusFlow.Core.InputTransport.InputReceiver>();
+					
+					services.AddSingleton<NexusFlow.Discovery.Peers.PeerRegistry>(sp =>
+					{
+						// choose a sensible “peer stale” TTL (example: 15 seconds)
+						var expiry = TimeSpan.FromSeconds(3600);
+						var sweep = TimeSpan.FromSeconds(15);
+						return new NexusFlow.Discovery.Peers.PeerRegistry(expiry, sweep);
+					});
+					services.AddSingleton<NexusFlow.Core.Discovery.IPeerEndpointResolver, PeerEndpointResolver>();
 
 				});
 

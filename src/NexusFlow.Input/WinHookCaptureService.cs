@@ -21,6 +21,16 @@ public interface IWinHookCaptureService
 
 public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 {
+	private const int WH_KEYBOARD_LL = 13;
+	private const int WH_MOUSE_LL = 14;
+
+	private Thread? _thread;
+	private uint _threadId;
+
+	private readonly ManualResetEventSlim _started = new(false);
+	private readonly ManualResetEventSlim _stopped = new(false);
+	private volatile bool _run;
+
 	private IntPtr _kbdHook = IntPtr.Zero;
 	private IntPtr _mouseHook = IntPtr.Zero;
 
@@ -32,51 +42,119 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 	private bool _hasLast;
 
 	public event Action<CapturedKeyEvent>? Key;
-	public event Action<CapturedMouseButtonEvent>? MouseButton;
 	public event Action<CapturedMouseMoveEvent>? MouseMove;
+	public event Action<CapturedMouseButtonEvent>? MouseButton;
 	public event Action<CapturedMouseWheelEvent>? MouseWheel;
 
 	public void Start()
 	{
-		if (_kbdHook != IntPtr.Zero || _mouseHook != IntPtr.Zero) return;
+		// idempotent
+		if (_thread is not null) return;
 
-		_kbdProc = KbdHookCallback;
-		_mouseProc = MouseHookCallback;
+		_run = true;
+		_started.Reset();
+		_stopped.Reset();
 
-		var hMod = GetModuleHandle(null);
+		_thread = new Thread(HookThreadMain)
+		{
+			IsBackground = true,
+			Name = "NexusFlow.Input.WinHookCapture"
+		};
+		_thread.Start();
 
-		_kbdHook = SetWindowsHookEx(WH_KEYBOARD_LL, _kbdProc, hMod, 0);
-		if (_kbdHook == IntPtr.Zero)
-			throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install WH_KEYBOARD_LL.");
+		_started.Wait();
 
-		_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, hMod, 0);
-		if (_mouseHook == IntPtr.Zero)
-			throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install WH_MOUSE_LL.");
-
-		_hasLast = false;
+		// If hooks failed, thread would have signaled started but not installed hooks.
+		if (_kbdHook == IntPtr.Zero || _mouseHook == IntPtr.Zero)
+		{
+			Stop();
+			throw new InvalidOperationException("WinHookCaptureService failed to install one or more hooks.");
+		}
 	}
 
 	public void Stop()
 	{
-		if (_kbdHook != IntPtr.Zero)
-		{
-			UnhookWindowsHookEx(_kbdHook);
-			_kbdHook = IntPtr.Zero;
-		}
+		var t = _thread;
+		if (t is null) return;
 
-		if (_mouseHook != IntPtr.Zero)
-		{
-			UnhookWindowsHookEx(_mouseHook);
-			_mouseHook = IntPtr.Zero;
-		}
+		_run = false;
 
-		_kbdProc = null;
-		_mouseProc = null;
+		// Ask the hook thread to quit its message loop
+		if (_threadId != 0)
+			PostThreadMessage(_threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
 
-		_hasLast = false;
+		_stopped.Wait(TimeSpan.FromSeconds(2));
+
+		_thread = null;
+		_threadId = 0;
 	}
 
-	public void Dispose() => Stop();
+	public void Dispose()
+	{
+		Stop();
+		_started.Dispose();
+		_stopped.Dispose();
+	}
+
+	private void HookThreadMain()
+	{
+		try
+		{
+			_threadId = GetCurrentThreadId();
+
+			// Keep delegates alive
+			_kbdProc = KbdHookCallback;
+			_mouseProc = MouseHookCallback;
+
+			var hMod = GetModuleHandle(null);
+
+			_kbdHook = SetWindowsHookEx(WH_KEYBOARD_LL, _kbdProc, hMod, 0);
+			if (_kbdHook == IntPtr.Zero)
+				throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install WH_KEYBOARD_LL.");
+
+			_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, hMod, 0);
+			if (_mouseHook == IntPtr.Zero)
+				throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install WH_MOUSE_LL.");
+
+			_hasLast = false;
+
+			_started.Set();
+
+			// Message loop required for reliable LL hook delivery
+			while (_run && GetMessage(out var msg, IntPtr.Zero, 0, 0) != 0)
+			{
+				TranslateMessage(ref msg);
+				DispatchMessage(ref msg);
+			}
+		}
+		catch
+		{
+			// Ensure Start() unblocks and caller sees failure
+			_started.Set();
+		}
+		finally
+		{
+			try
+			{
+				if (_kbdHook != IntPtr.Zero)
+				{
+					UnhookWindowsHookEx(_kbdHook);
+					_kbdHook = IntPtr.Zero;
+				}
+				if (_mouseHook != IntPtr.Zero)
+				{
+					UnhookWindowsHookEx(_mouseHook);
+					_mouseHook = IntPtr.Zero;
+				}
+			}
+			catch { /* never throw on cleanup */ }
+
+			_kbdProc = null;
+			_mouseProc = null;
+
+			_stopped.Set();
+		}
+	}
 
 	private IntPtr KbdHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
 	{
@@ -145,7 +223,6 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 									TimestampUtcTicks: DateTime.UtcNow.Ticks
 								));
 							}
-
 							break;
 						}
 
@@ -174,14 +251,11 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 								Y: ms.pt.y,
 								TimestampUtcTicks: DateTime.UtcNow.Ticks
 							));
-
-
 							break;
 						}
 
 					case MouseMessage.WM_MOUSEWHEEL:
 						{
-							// High word of mouseData contains wheel delta (120 multiples)
 							var delta = (short)((ms.mouseData >> 16) & 0xFFFF);
 							MouseWheel?.Invoke(new CapturedMouseWheelEvent(
 								Delta: delta,
@@ -189,7 +263,6 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 								Y: ms.pt.y,
 								TimestampUtcTicks: DateTime.UtcNow.Ticks
 							));
-
 							break;
 						}
 				}
@@ -203,11 +276,9 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 		return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 	}
 
+	// -------- Win32 interop --------
 
-	// ----------------- Win32 interop -----------------
-
-	private const int WH_KEYBOARD_LL = 13;
-	private const int WH_MOUSE_LL = 14;
+	private const uint WM_QUIT = 0x0012;
 
 	private enum KeyboardMessage : int
 	{
@@ -252,6 +323,18 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 		public IntPtr dwExtraInfo;
 	}
 
+	[StructLayout(LayoutKind.Sequential)]
+	private struct MSG
+	{
+		public IntPtr hwnd;
+		public uint message;
+		public IntPtr wParam;
+		public IntPtr lParam;
+		public uint time;
+		public POINT pt;
+		public uint lPrivate;
+	}
+
 	private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 	private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -267,6 +350,21 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 
 	[DllImport("user32.dll")]
 	private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	private static extern sbyte GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+	[DllImport("user32.dll")]
+	private static extern bool TranslateMessage(ref MSG lpMsg);
+
+	[DllImport("user32.dll")]
+	private static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	private static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
+
+	[DllImport("kernel32.dll")]
+	private static extern uint GetCurrentThreadId();
 
 	[DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
 	private static extern IntPtr GetModuleHandle(string? lpModuleName);

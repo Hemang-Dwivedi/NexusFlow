@@ -59,6 +59,8 @@ public sealed class TcpMuxHost : IDisposable
 						await OnPairingFirstFrame(client, stream, payload);
 					else if (type == MessageType.Control && OnControlFirstFrame is not null)
 						await OnControlFirstFrame(client, stream, payload);
+					else if (type == MessageType.Input && OnInputFirstFrame is not null)
+						await OnInputFirstFrame(client, stream, payload);
 					else
 						client.Close();
 				}
@@ -69,6 +71,8 @@ public sealed class TcpMuxHost : IDisposable
 			}, ct);
 		}
 	}
+	public Func<TcpClient, NetworkStream, byte[] /*firstPayload*/, Task>? OnInputFirstFrame { get; set; }
+
 
 	public void Dispose() => _ = StopAsync();
 }

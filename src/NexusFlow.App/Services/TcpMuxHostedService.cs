@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Hosting;
 using NexusFlow.Core.Control;
+using NexusFlow.Core.InputTransport;
 using NexusFlow.Core.Transport;
 using NexusFlow.Core.Trust;
 using System.Threading;
@@ -12,12 +13,14 @@ public sealed class TcpMuxHostedService : IHostedService
 	private readonly TcpMuxHost _host;
 	private readonly ConnectionManager _connections;
 	private readonly PairingListener _pairing; // update PairingListener to expose HandleIncomingFirstFrame
+	private readonly InputReceiver _inputReceiver;
 
-	public TcpMuxHostedService(TcpMuxHost host, ConnectionManager connections, PairingListener pairing)
+	public TcpMuxHostedService(TcpMuxHost host, InputReceiver inputReceiver, ConnectionManager connections, PairingListener pairing)
 	{
 		_host = host;
 		_connections = connections;
 		_pairing = pairing;
+		_inputReceiver = inputReceiver;
 	}
 
 	public Task StartAsync(CancellationToken ct)
