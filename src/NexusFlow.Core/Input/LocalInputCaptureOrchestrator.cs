@@ -24,7 +24,7 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 
 	// Optional: only if you already have these registered
 	private readonly InputSender? _sender;
-	private readonly IPeerEndpointResolver _peers;
+	private readonly IPeerEndpointResolver? _peers;
 
 	private long _lastMouseMoveLogTicks;
 	private static readonly long MouseMoveLogIntervalTicks = TimeSpan.FromMilliseconds(75).Ticks;
@@ -148,7 +148,7 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 	private async Task TrySendAsync(InputEventV1 ev, CancellationToken ct)
 	{
 		// Transport not yet wired -> no-op.
-		if (_sender is null || _peers is null) return;
+		if (_sender is null || _peers is null || _routing.isFailsafeActive) return;
 
 		// Only send if ActiveTarget != self
 		var targetPeerId = _routing.ActiveTargetPeerId;
@@ -158,9 +158,7 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 		{
 			if (_peers.TryGetEndpoint(targetPeerId, out var host, out var port))
 			{
-				await _sender.EnsureConnectedAsync(host, port, CancellationToken.None);
-
-				await _sender.EnsureConnectedAsync(host, TcpPort, ct).ConfigureAwait(false);
+				await _sender.EnsureConnectedAsync(host, TcpPort, ct);
 				await _sender.SendAsync(ev, ct).ConfigureAwait(false);
 			}
 		}

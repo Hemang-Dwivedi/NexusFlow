@@ -14,14 +14,13 @@ public sealed class DiscoveryCoordinator : IDisposable
 
 	public PeerRegistry Registry => _registry;
 
-	public DiscoveryCoordinator(ILocalIdentity identity, int tcpPort)
+	public DiscoveryCoordinator(
+		ILocalIdentity identity,
+		int tcpPort,
+		PeerRegistry registry)
 	{
 		_identity = identity;
-
-		_registry = new PeerRegistry(
-			expiry: TimeSpan.FromSeconds(3),
-			sweepInterval: TimeSpan.FromMilliseconds(500)
-		);
+		_registry = registry;
 
 		_listener = new DiscoveryListener(_registry);
 
@@ -36,11 +35,9 @@ public sealed class DiscoveryCoordinator : IDisposable
 			interval: TimeSpan.FromMilliseconds(750)
 		);
 
-		// Core-only self-filter (prevents showing yourself as a peer)
 		_registry.OnPeerDiscovered += e =>
 		{
 			if (e.Peer.PeerId == _identity.PeerId) return;
-			// Later: raise Core-level event / push into a state store.
 		};
 	}
 

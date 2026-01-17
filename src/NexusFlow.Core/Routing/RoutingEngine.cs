@@ -58,6 +58,8 @@ public sealed class RoutingEngine : IRoutingEngine
 		}
 	}
 
+	public bool isFailsafeActive => _failsafe.IsBlocked;
+
 	public event EventHandler<string>? ActiveTargetChanged;
 	public event EventHandler<string>? ActiveSourceChanged;
 

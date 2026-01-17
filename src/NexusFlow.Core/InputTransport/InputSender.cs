@@ -32,7 +32,7 @@ public sealed class InputSender : IDisposable
 		_stream = _client.GetStream();
 
 		var hello = new InputHelloV1(_me.PeerId, DateTime.UtcNow.Ticks);
-		await FramingV2.WriteAsync(_stream, MessageType.Input, InputCodec.Encode(hello), ct).ConfigureAwait(false);
+		await FramingV2.WriteAsync(_stream, MessageType.Input, InputCodec.Encode(hello), ct);
 	}
 
 	public async Task SendAsync(InputEventV1 ev, CancellationToken ct)

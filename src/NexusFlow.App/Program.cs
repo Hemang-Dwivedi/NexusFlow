@@ -9,6 +9,7 @@ using NexusFlow.Core.Routing;
 using NexusFlow.Core.Services;
 using NexusFlow.Core.Transport;
 using NexusFlow.Core.Trust;
+using NexusFlow.Discovery.Peers;
 using NexusFlow.Display.Windows;
 using NexusFlow.Identity;
 using NexusFlow.Settings;
@@ -68,11 +69,7 @@ namespace NexusFlow.App
 					// ---------- Core: Discovery ----------
 					const int tcpPort = 49800;
 
-					services.AddSingleton(sp =>
-					{
-						var identity = sp.GetRequiredService<ILocalIdentity>();
-						return new DiscoveryCoordinator(identity, tcpPort);
-					});
+
 					services.AddHostedService<DiscoveryHostedService>();
 
 					// ---------- Transport / Mux ----------
@@ -92,16 +89,6 @@ namespace NexusFlow.App
 					// NOTE: ConnectionManager ctor = (ILocalIdentity me, TrustStore trustStore)
 					services.AddSingleton<ConnectionManager>();
 
-					// ---------- Routing (needs localPeerId + IControlBroadcaster) ----------
-					// ConnectionManager implements IControlBroadcaster in your updated file.
-					services.AddSingleton<IRoutingEngine>(sp =>
-					{
-						var me = sp.GetRequiredService<ILocalIdentity>();
-						var control = sp.GetRequiredService<ConnectionManager>(); // IControlBroadcaster
-						var failsafe = sp.GetRequiredService<NexusFlow.Core.Services.IFailsafeService>();
-						var log = sp.GetRequiredService<NexusFlow.Core.Diagnostics.IDiagnosticsLog>();
-						return new RoutingEngine(me.PeerId, control, failsafe, log);
-					});
 
 					services.AddHostedService<RoutingWireupHostedService>();
 
@@ -162,6 +149,16 @@ namespace NexusFlow.App
 						return new NexusFlow.Discovery.Peers.PeerRegistry(expiry, sweep);
 					});
 					services.AddSingleton<NexusFlow.Core.Discovery.IPeerEndpointResolver, PeerEndpointResolver>();
+
+					services.AddSingleton<NexusFlow.Core.InputTransport.InputSender>();
+					services.AddSingleton(sp =>
+					{
+						var identity = sp.GetRequiredService<ILocalIdentity>();
+						var registry = sp.GetRequiredService<PeerRegistry>();
+						return new DiscoveryCoordinator(identity, tcpPort, registry);
+					});
+
+
 
 				});
 

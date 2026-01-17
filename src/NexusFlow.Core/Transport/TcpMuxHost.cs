@@ -27,6 +27,8 @@ public sealed class TcpMuxHost : IDisposable
 		_loop = AcceptLoopAsync(_cts.Token);
 	}
 
+	public Func<TcpClient, NetworkStream, byte[] /*firstPayload*/, Task>? OnInputFirstFrame { get; set; }
+
 	public async Task StopAsync()
 	{
 		if (_cts is null) return;
@@ -71,7 +73,6 @@ public sealed class TcpMuxHost : IDisposable
 			}, ct);
 		}
 	}
-	public Func<TcpClient, NetworkStream, byte[] /*firstPayload*/, Task>? OnInputFirstFrame { get; set; }
 
 
 	public void Dispose() => _ = StopAsync();
