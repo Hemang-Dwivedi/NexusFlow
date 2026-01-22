@@ -17,7 +17,7 @@ This project is being built with a strong focus on **safety**, **low latency**, 
 NexusFlow is under heavy, ongoing development. Internal APIs, protocol formats, and implementation details may change frequently.
 
 The project is intentionally being developed **in the open** to document architectural decisions, trade-offs, and lessons learned while building a real-time peer-to-peer system on Windows.
-
+> Detailed internal architecture and customization documentation will be added once Phase 1 stabilizes.
 ---
 
 ## 🎯 Problem Statement
