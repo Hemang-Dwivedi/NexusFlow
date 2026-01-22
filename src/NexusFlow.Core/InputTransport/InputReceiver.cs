@@ -3,19 +3,21 @@ using NexusFlow.Core.Diagnostics;
 using NexusFlow.Protocol.Input;
 using NexusFlow.Protocol.Transport;
 using NexusFlow.Transport;
+using NexusFlow.Trust;
 
 namespace NexusFlow.Core.InputTransport;
 
 public sealed class InputReceiver
 {
 	private const string Cat = "input-remote";
-	private readonly IDiagnosticsLog _log;
-	private readonly OrderedInputRouter _ordered;
 
-	public InputReceiver(IDiagnosticsLog log, OrderedInputRouter ordered)
+	private readonly IDiagnosticsLog _log;
+	private readonly TrustStore _trust;
+
+	public InputReceiver(IDiagnosticsLog log, TrustStore trust)
 	{
 		_log = log;
-		_ordered = ordered;
+		_trust = trust;
 	}
 
 	public async Task HandleFirstFrameAsync(TcpClient client, NetworkStream stream, byte[] firstPayload, CancellationToken ct)
@@ -27,7 +29,15 @@ public sealed class InputReceiver
 		}
 		catch
 		{
-			client.Close();
+			try { client.Close(); } catch { }
+			return;
+		}
+
+		// ---- F.4: TRUST ENFORCEMENT ----
+		if (!IsTrustedPeer(hello.FromPeerId))
+		{
+			_log.Warn(Cat, $"Rejecting INPUT channel from untrusted peerId={hello.FromPeerId}");
+			try { client.Close(); } catch { }
 			return;
 		}
 
@@ -43,11 +53,28 @@ public sealed class InputReceiver
 
 				var ev = InputCodec.Decode<InputEventV1>(payload);
 
-				// RX trace (raw arrival)
-				_log.Trace(Cat, $"RX {ev.FromPeerId} seq={ev.Seq} kind={ev.Kind}");
+				switch (ev.Kind)
+				{
+					case InputKind.Key:
+						_log.Trace(Cat, $"RX KEY vk={ev.Key!.VkCode} down={ev.Key.IsDown}");
+						break;
 
-				// Ordered apply
-				_ordered.Push(ev, ApplyInOrder);
+					case InputKind.MouseMove:
+						_log.Trace(Cat, $"RX MOVE dx={ev.Move!.Dx} dy={ev.Move.Dy}");
+						break;
+
+					case InputKind.MouseButton:
+						_log.Trace(Cat, $"RX BTN {ev.Button!.Button} down={ev.Button.IsDown}");
+						break;
+
+					case InputKind.MouseWheel:
+						_log.Trace(Cat, $"RX WHEEL delta={ev.Wheel!.Delta}");
+						break;
+
+					default:
+						_log.Trace(Cat, $"RX {ev.FromPeerId} seq={ev.Seq} kind={ev.Kind}");
+						break;
+				}
 			}
 		}
 		catch
@@ -61,30 +88,11 @@ public sealed class InputReceiver
 		}
 	}
 
-	private void ApplyInOrder(InputEventV1 ev)
+	private bool IsTrustedPeer(string peerId)
 	{
-		// APPLY trace (this is the one that must be strictly in-order)
-		switch (ev.Kind)
-		{
-			case InputKind.Key:
-				_log.Trace(Cat, $"APPLY KEY vk={ev.Key!.VkCode} down={ev.Key.IsDown} seq={ev.Seq}");
-				break;
-
-			case InputKind.MouseMove:
-				_log.Trace(Cat, $"APPLY MOVE dx={ev.Move!.Dx} dy={ev.Move.Dy} seq={ev.Seq}");
-				break;
-
-			case InputKind.MouseButton:
-				_log.Trace(Cat, $"APPLY BTN {ev.Button!.Button} down={ev.Button.IsDown} seq={ev.Seq}");
-				break;
-
-			case InputKind.MouseWheel:
-				_log.Trace(Cat, $"APPLY WHEEL delta={ev.Wheel!.Delta} seq={ev.Seq}");
-				break;
-
-			default:
-				_log.Trace(Cat, $"APPLY {ev.FromPeerId} seq={ev.Seq} kind={ev.Kind}");
-				break;
-		}
+		// Load once per connection (fine for F.4).
+		// Later we can cache and update on trust changes.
+		var state = _trust.Load();
+		return state.Peers.Any(p => p.PeerId == peerId && p.TrustedAtUtc <= DateTime.UtcNow);
 	}
 }
