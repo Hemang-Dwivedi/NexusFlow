@@ -156,7 +156,10 @@ namespace NexusFlow.App
 						var identity = sp.GetRequiredService<ILocalIdentity>();
 						var registry = sp.GetRequiredService<PeerRegistry>();
 						return new DiscoveryCoordinator(identity, tcpPort, registry);
+
 					});
+					services.AddSingleton<NexusFlow.Core.InputTransport.OrderedInputRouter>();
+					services.AddSingleton<NexusFlow.Core.InputTransport.InputReceiver>();
 
 
 

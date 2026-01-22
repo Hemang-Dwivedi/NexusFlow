@@ -2,6 +2,7 @@
 using NexusFlow.Core.Discovery;
 using NexusFlow.Core.InputTransport;
 using NexusFlow.Core.Routing;
+using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Input;
 using NexusFlow.Protocol.Input;
@@ -20,9 +21,9 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 	private readonly ILocalIdentity _identity;
 	private readonly IWinHookCaptureService _capture;
 	private readonly RoutingEngine _routing;
+	private readonly IFailsafeService _failsafe;
 	private readonly IDiagnosticsLog _log;
 
-	// Optional: only if you already have these registered
 	private readonly InputSender? _sender;
 	private readonly IPeerEndpointResolver? _peers;
 
@@ -43,11 +44,11 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 	private readonly CancellationTokenSource _cts = new();
 	private readonly Task _senderLoop;
 
-	// NOTE: sender/peers are optional so Phase F.1 can work without wiring transport yet.
 	public LocalInputCaptureOrchestrator(
 		ILocalIdentity identity,
 		IWinHookCaptureService capture,
 		RoutingEngine routing,
+		IFailsafeService failsafe,
 		IDiagnosticsLog log,
 		InputSender? sender = null,
 		IPeerEndpointResolver? peers = null)
@@ -55,6 +56,7 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 		_identity = identity;
 		_capture = capture;
 		_routing = routing;
+		_failsafe = failsafe;
 		_log = log;
 
 		_sender = sender;
@@ -71,60 +73,147 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 	public void Start() => _capture.Start();
 	public void Stop() => _capture.Stop();
 
-	private void OnKey(CapturedKeyEvent e) => OnActivity(CapturedInputKind.Key, e.TimestampUtcTicks);
-	private void OnMove(CapturedMouseMoveEvent e) => OnActivity(CapturedInputKind.MouseMove, e.TimestampUtcTicks);
-	private void OnButton(CapturedMouseButtonEvent e) => OnActivity(CapturedInputKind.MouseButton, e.TimestampUtcTicks);
-	private void OnWheel(CapturedMouseWheelEvent e) => OnActivity(CapturedInputKind.MouseWheel, e.TimestampUtcTicks);
+	// ---------- Hook thread handlers (no await, no blocking) ----------
 
-	// IMPORTANT: must be fast, non-blocking (runs on hook thread)
-	private void OnActivity(CapturedInputKind kind, long ticks)
+	private void OnKey(CapturedKeyEvent e)
 	{
-		// Throttle hot path: mouse move is extremely frequent.
-		if (kind == CapturedInputKind.MouseMove)
-		{
-			var last = Volatile.Read(ref _lastMouseMoveLogTicks);
-			if (ticks - last < MouseMoveLogIntervalTicks)
-				return;
+		FlipLocalSourceIfNeeded();
+		_out.Writer.TryWrite(BuildKeyEvent(e));
+	}
 
-			Volatile.Write(ref _lastMouseMoveLogTicks, ticks);
-		}
+	private void OnMove(CapturedMouseMoveEvent e)
+	{
+		if (ThrottleMouse(e.TimestampUtcTicks)) return;
+		FlipLocalSourceIfNeeded();
+		_out.Writer.TryWrite(BuildMoveEvent(e));
+	}
 
-		// Phase F.1: local-only flip to self (no broadcast)
+	private void OnButton(CapturedMouseButtonEvent e)
+	{
+		FlipLocalSourceIfNeeded();
+		_out.Writer.TryWrite(BuildButtonEvent(e));
+	}
+
+	private void OnWheel(CapturedMouseWheelEvent e)
+	{
+		FlipLocalSourceIfNeeded();
+		_out.Writer.TryWrite(BuildWheelEvent(e));
+	}
+
+	private void FlipLocalSourceIfNeeded()
+	{
+		// Phase F: local-only
 		if (_routing.ActiveSourcePeerId != _identity.PeerId)
 			_ = _routing.SetActiveSourceLocalOnlyAsync(_identity.PeerId);
 
-		_log.Trace(Cat, $"Local input: {kind}");
-
-		// Phase F.2 prep: enqueue outbound input (no await on hook thread)
-		// If transport not wired yet, this is harmless.
-		var ev = BuildInputEvent(kind, ticks);
-		_out.Writer.TryWrite(ev);
+		_log.Trace(Cat, "Local input");
 	}
 
-	private InputEventV1 BuildInputEvent(CapturedInputKind kind, long ticks)
+	private bool ThrottleMouse(long ticks)
+	{
+		var last = Volatile.Read(ref _lastMouseMoveLogTicks);
+		if (ticks - last < MouseMoveLogIntervalTicks)
+			return true;
+
+		Volatile.Write(ref _lastMouseMoveLogTicks, ticks);
+		return false;
+	}
+
+	// ---------- Protocol mapping (end-to-end payload structs) ----------
+
+	private InputEventV1 BuildKeyEvent(CapturedKeyEvent e)
 	{
 		var seq = Interlocked.Increment(ref _localSeq);
-
-		var mappedKind = kind switch
-		{
-			CapturedInputKind.Key => InputKind.Key,
-			CapturedInputKind.MouseMove => InputKind.MouseMove,
-			CapturedInputKind.MouseButton => InputKind.MouseButton,
-			CapturedInputKind.MouseWheel => InputKind.MouseWheel,
-			_ => InputKind.Key
-		};
 
 		return new InputEventV1(
 			FromPeerId: _identity.PeerId,
 			Seq: seq,
-			TimestampUtcTicks: ticks,
-			Kind: mappedKind,
-			Key: null,
+			TimestampUtcTicks: e.TimestampUtcTicks,
+			Kind: InputKind.Key,
+			Key: new InputKeyPayload(
+				VkCode: e.VkCode,
+				ScanCode: e.ScanCode,
+				IsDown: e.Action == CapturedKeyAction.Down
+			),
 			Move: null,
 			Button: null,
 			Wheel: null
 		);
 	}
+
+	private InputEventV1 BuildMoveEvent(CapturedMouseMoveEvent e)
+	{
+		var seq = Interlocked.Increment(ref _localSeq);
+
+		return new InputEventV1(
+			FromPeerId: _identity.PeerId,
+			Seq: seq,
+			TimestampUtcTicks: e.TimestampUtcTicks,
+			Kind: InputKind.MouseMove,
+			Key: null,
+			Move: new InputMouseMovePayload(
+				Dx: e.Dx,
+				Dy: e.Dy,
+				X: e.X,
+				Y: e.Y
+			),
+			Button: null,
+			Wheel: null
+		);
+	}
+
+	private InputEventV1 BuildButtonEvent(CapturedMouseButtonEvent e)
+	{
+		var seq = Interlocked.Increment(ref _localSeq);
+
+		// Protocol uses byte (keep it stable for v1)
+		// 1=Left, 2=Right, 3=Middle
+		byte btn = e.Button switch
+		{
+			CapturedMouseButton.Left => 1,
+			CapturedMouseButton.Right => 2,
+			CapturedMouseButton.Middle => 3,
+			_ => 1
+		};
+
+		return new InputEventV1(
+			FromPeerId: _identity.PeerId,
+			Seq: seq,
+			TimestampUtcTicks: e.TimestampUtcTicks,
+			Kind: InputKind.MouseButton,
+			Key: null,
+			Move: null,
+			Button: new InputMouseButtonPayload(
+				Button: btn,
+				IsDown: e.Action == MouseButtonAction.Down,
+				X: e.X,
+				Y: e.Y
+			),
+			Wheel: null
+		);
+	}
+
+	private InputEventV1 BuildWheelEvent(CapturedMouseWheelEvent e)
+	{
+		var seq = Interlocked.Increment(ref _localSeq);
+
+		return new InputEventV1(
+			FromPeerId: _identity.PeerId,
+			Seq: seq,
+			TimestampUtcTicks: e.TimestampUtcTicks,
+			Kind: InputKind.MouseWheel,
+			Key: null,
+			Move: null,
+			Button: null,
+			Wheel: new InputMouseWheelPayload(
+				Delta: e.Delta,
+				X: e.X,
+				Y: e.Y
+			)
+		);
+	}
+
+	// ---------- Sender loop (async, off hook thread) ----------
 
 	private async Task SenderLoopAsync()
 	{
@@ -133,9 +222,7 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 			while (await _out.Reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false))
 			{
 				while (_out.Reader.TryRead(out var ev))
-				{
 					await TrySendAsync(ev, _cts.Token).ConfigureAwait(false);
-				}
 			}
 		}
 		catch (OperationCanceledException) { }
@@ -147,18 +234,18 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 
 	private async Task TrySendAsync(InputEventV1 ev, CancellationToken ct)
 	{
-		// Transport not yet wired -> no-op.
-		if (_sender is null || _peers is null || _routing.isFailsafeActive) return;
+		if (_sender is null || _peers is null) return;
+		if (_failsafe.IsBlocked) return;
 
-		// Only send if ActiveTarget != self
 		var targetPeerId = _routing.ActiveTargetPeerId;
 		if (string.Equals(targetPeerId, _identity.PeerId, StringComparison.Ordinal))
 			return;
+
 		try
 		{
 			if (_peers.TryGetEndpoint(targetPeerId, out var host, out var port))
 			{
-				await _sender.EnsureConnectedAsync(host, TcpPort, ct);
+				await _sender.EnsureConnectedAsync(host, TcpPort, ct).ConfigureAwait(false);
 				await _sender.SendAsync(ev, ct).ConfigureAwait(false);
 			}
 		}
