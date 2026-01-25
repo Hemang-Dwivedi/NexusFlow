@@ -165,6 +165,7 @@ namespace NexusFlow.App
 						sp.GetRequiredService<ConnectionManager>());
 
 					services.AddSingleton<NexusFlow.Core.InputTransport.InputSender>();
+					services.AddSingleton<NexusFlow.Core.InputTransport.IRemoteInputSink, NexusFlow.Core.InputTransport.DiagnosticsRemoteInputSink>();
 
 
 				});
