@@ -161,6 +161,10 @@ namespace NexusFlow.App
 					services.AddSingleton<NexusFlow.Core.InputTransport.OrderedInputRouter>();
 					services.AddSingleton<NexusFlow.Core.InputTransport.InputReceiver>();
 
+					services.AddSingleton<NexusFlow.Core.InputTransport.IInputAuthKeyProvider>(sp =>
+						sp.GetRequiredService<ConnectionManager>());
+
+					services.AddSingleton<NexusFlow.Core.InputTransport.InputSender>();
 
 
 				});

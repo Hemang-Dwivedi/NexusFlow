@@ -245,7 +245,7 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 		{
 			if (_peers.TryGetEndpoint(targetPeerId, out var host, out var port))
 			{
-				await _sender.EnsureConnectedAsync(host, TcpPort, ct).ConfigureAwait(false);
+				await await _sender.EnsureConnectedAsync(targetPeerId, host, port, ct).ConfigureAwait(false);
 				await _sender.SendAsync(ev, ct).ConfigureAwait(false);
 			}
 		}

@@ -9,6 +9,7 @@ using NexusFlow.Protocol.Control;
 using NexusFlow.Protocol.Transport;
 using NexusFlow.Transport;
 using NexusFlow.Trust;
+using NexusFlow.Core.InputTransport;
 
 namespace NexusFlow.Core.Control;
 
@@ -19,7 +20,7 @@ namespace NexusFlow.Core.Control;
 /// - control-message dispatch
 /// - broadcast / send helpers
 /// </summary>
-public sealed class ConnectionManager : IControlBroadcaster, IDisposable
+public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInputAuthKeyProvider
 {
 	private readonly ILocalIdentity _me;
 	private readonly TrustStore _trustStore;
@@ -42,6 +43,36 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable
 	public IReadOnlyCollection<ConnectedPeer> Snapshot() => _connected.Values.ToList();
 
 	public bool IsConnected(string peerId) => _connected.ContainsKey(peerId);
+
+	public bool TryGetInputAuthKey(string peerId, out byte[] key)
+	{
+		if (!TryGetControlSessionKey(peerId, out var controlKey))
+		{
+			key = Array.Empty<byte>();
+			return false;
+		}
+
+		key = Derive(controlKey);
+		return true;
+	}
+
+	private static byte[] Derive(byte[] controlKey)
+	{
+		using var sha = SHA256.Create();
+		var label = Encoding.UTF8.GetBytes("nexusflow-input-v1");
+		var buf = new byte[controlKey.Length + label.Length];
+		Buffer.BlockCopy(controlKey, 0, buf, 0, controlKey.Length);
+		Buffer.BlockCopy(label, 0, buf, controlKey.Length, label.Length);
+		return sha.ComputeHash(buf);
+	}
+
+	private bool TryGetControlSessionKey(string peerId, out byte[] controlKey)
+	{
+		// IMPLEMENT using your existing authenticated control session store
+		controlKey = Array.Empty<byte>();
+		return false;
+	}
+
 
 	// ------------------------------------------------------------------
 	// IControlBroadcaster

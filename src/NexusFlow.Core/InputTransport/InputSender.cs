@@ -1,6 +1,9 @@
 ﻿using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using NexusFlow.Core.InputTransport;
 using NexusFlow.Identity;
 using NexusFlow.Protocol.Input;
 using NexusFlow.Protocol.Transport;
@@ -11,6 +14,7 @@ namespace NexusFlow.Core.InputTransport;
 public sealed class InputSender : IDisposable
 {
 	private readonly ILocalIdentity _me;
+	private readonly IInputAuthKeyProvider _keys;
 
 	private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -20,18 +24,21 @@ public sealed class InputSender : IDisposable
 	private string? _host;
 	private int _port;
 
+	private string? _targetPeerId;
+
 	private long _seq;
 
-	public InputSender(ILocalIdentity me)
+	public InputSender(ILocalIdentity me, IInputAuthKeyProvider keys)
 	{
 		_me = me;
+		_keys = keys;
 	}
 
 	public long NextSeq() => Interlocked.Increment(ref _seq);
 
-	public async Task EnsureConnectedAsync(string targetIpOrHost, int port, CancellationToken ct)
+	public async Task EnsureConnectedAsync(string targetPeerId, string targetIpOrHost, int port, CancellationToken ct)
 	{
-		// Remember the latest endpoint (so reconnect after failure can use it)
+		_targetPeerId = targetPeerId;
 		_host = targetIpOrHost;
 		_port = port;
 
@@ -51,21 +58,16 @@ public sealed class InputSender : IDisposable
 
 	public async Task SendAsync(InputEventV1 ev, CancellationToken ct)
 	{
-		// Fast path attempt: try writing under lock so stream doesn't change mid-write
 		await _gate.WaitAsync(ct).ConfigureAwait(false);
 		try
 		{
 			if (!IsUsableConnectedSocket(_client, _stream))
-			{
 				await ReconnectLockedAsync(ct).ConfigureAwait(false);
-			}
 
-			// At this point stream must exist or reconnect threw
 			await FramingV2.WriteAsync(_stream!, MessageType.Input, InputCodec.Encode(ev), ct).ConfigureAwait(false);
 		}
 		catch
 		{
-			// Mark dead and let the next call reconnect.
 			ResetLocked();
 			throw;
 		}
@@ -77,25 +79,49 @@ public sealed class InputSender : IDisposable
 
 	private async Task ReconnectLockedAsync(CancellationToken ct)
 	{
-		if (string.IsNullOrWhiteSpace(_host))
-			throw new InvalidOperationException("InputSender: No target host set. Call EnsureConnectedAsync first.");
+		if (string.IsNullOrWhiteSpace(_host) || _port == 0 || string.IsNullOrWhiteSpace(_targetPeerId))
+			throw new InvalidOperationException("InputSender: missing endpoint/peerId. Call EnsureConnectedAsync(targetPeerId, host, port) first.");
+
+		// Must have auth key derived from authenticated Control session
+		if (!_keys.TryGetInputAuthKey(_targetPeerId!, out var inputAuthKey))
+			throw new InvalidOperationException($"InputSender: no InputAuthKey for peerId={_targetPeerId} (no authenticated control session?)");
 
 		ResetLocked();
 
-		var client = new TcpClient
-		{
-			NoDelay = true // low latency
-		};
-
+		var client = new TcpClient { NoDelay = true };
 		await client.ConnectAsync(_host!, _port, ct).ConfigureAwait(false);
 		var stream = client.GetStream();
 
 		_client = client;
 		_stream = stream;
 
-		// Always send hello as the FIRST framed Input message on this socket.
-		var hello = new InputHelloV1(_me.PeerId, DateTime.UtcNow.Ticks);
+		// F.5: Authenticated hello FIRST
+		var hello = BuildHelloV2(inputAuthKey);
 		await FramingV2.WriteAsync(stream, MessageType.Input, InputCodec.Encode(hello), ct).ConfigureAwait(false);
+	}
+
+	private InputHelloV2 BuildHelloV2(byte[] inputAuthKey)
+	{
+		var ts = DateTime.UtcNow.Ticks;
+		var nonce = RandomNumberGenerator.GetBytes(16);
+		var mac = ComputeHelloMac(inputAuthKey, _me.PeerId, ts, nonce);
+		return new InputHelloV2(_me.PeerId, ts, nonce, mac);
+	}
+
+	private static byte[] ComputeHelloMac(byte[] key, string fromPeerId, long tsTicks, byte[] nonce)
+	{
+		using var h = new HMACSHA256(key);
+
+		var idBytes = Encoding.UTF8.GetBytes(fromPeerId);
+		var tsBytes = BitConverter.GetBytes(tsTicks); // little-endian
+		var msg = new byte[idBytes.Length + 1 + tsBytes.Length + nonce.Length];
+
+		Buffer.BlockCopy(idBytes, 0, msg, 0, idBytes.Length);
+		msg[idBytes.Length] = 0;
+		Buffer.BlockCopy(tsBytes, 0, msg, idBytes.Length + 1, tsBytes.Length);
+		Buffer.BlockCopy(nonce, 0, msg, idBytes.Length + 1 + tsBytes.Length, nonce.Length);
+
+		return h.ComputeHash(msg);
 	}
 
 	private static bool IsUsableConnectedSocket(TcpClient? c, NetworkStream? s)
@@ -103,8 +129,6 @@ public sealed class InputSender : IDisposable
 		if (c is null || s is null) return false;
 		if (!c.Connected) return false;
 
-		// This is the only reliable "did the peer close?" check without a read:
-		// Poll + Available==0 indicates graceful close.
 		try
 		{
 			var sock = c.Client;
@@ -131,10 +155,7 @@ public sealed class InputSender : IDisposable
 	public void Dispose()
 	{
 		_gate.Wait();
-		try
-		{
-			ResetLocked();
-		}
+		try { ResetLocked(); }
 		finally
 		{
 			_gate.Release();
