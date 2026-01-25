@@ -5,6 +5,7 @@ using NexusFlow.App.Services;
 using NexusFlow.App.Views;
 using NexusFlow.Core.Control;
 using NexusFlow.Core.Discovery;
+using NexusFlow.Core.InputInjection;
 using NexusFlow.Core.Routing;
 using NexusFlow.Core.Services;
 using NexusFlow.Core.Transport;
@@ -166,6 +167,8 @@ namespace NexusFlow.App
 
 					services.AddSingleton<NexusFlow.Core.InputTransport.InputSender>();
 					services.AddSingleton<NexusFlow.Core.InputTransport.IRemoteInputSink, NexusFlow.Core.InputTransport.DiagnosticsRemoteInputSink>();
+					// ---------- Input Injection (F.7) ----------
+					services.AddSingleton<IInputInjector, NoopInputInjector>();
 
 
 				});

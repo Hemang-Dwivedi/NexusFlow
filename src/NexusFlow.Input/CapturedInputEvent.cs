@@ -5,6 +5,7 @@ public enum CapturedKeyAction { Down, Up }
 public sealed record CapturedKeyEvent(
 	int VkCode,
 	int ScanCode,
+	int Flags,
 	CapturedKeyAction Action,
 	long TimestampUtcTicks
 );

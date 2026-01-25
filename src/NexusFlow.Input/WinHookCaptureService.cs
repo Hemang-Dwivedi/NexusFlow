@@ -168,6 +168,10 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 				{
 					var kb = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
 
+					// F.8: suppress events injected by NexusFlow
+					if (kb.dwExtraInfo == InjectedEventMarker.Magic)
+						return CallNextHookEx(_kbdHook, nCode, wParam, lParam);
+
 					var action = (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN)
 						? CapturedKeyAction.Down
 						: CapturedKeyAction.Up;
@@ -175,6 +179,7 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 					Key?.Invoke(new CapturedKeyEvent(
 						VkCode: kb.vkCode,
 						ScanCode: kb.scanCode,
+						Flags: kb.flags,
 						Action: action,
 						TimestampUtcTicks: DateTime.UtcNow.Ticks
 					));
@@ -197,6 +202,10 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			{
 				var msg = (MouseMessage)wParam;
 				var ms = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+
+				// F.8: suppress NexusFlow-injected events
+				if (ms.dwExtraInfo == InjectedEventMarker.Magic)
+					return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 
 				switch (msg)
 				{
