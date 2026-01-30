@@ -169,7 +169,7 @@ namespace NexusFlow.App
 					services.AddSingleton<NexusFlow.Core.InputTransport.IRemoteInputSink, NexusFlow.Core.InputTransport.DiagnosticsRemoteInputSink>();
 					// ---------- Input Injection (F.7) ----------
 					services.AddSingleton<IInputInjector, NoopInputInjector>();
-
+					services.AddSingleton<IInputInjector, WindowsSendInputInjector>();
 
 				});
 
