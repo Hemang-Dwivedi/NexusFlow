@@ -1,4 +1,7 @@
 ﻿using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using NexusFlow.Core.Control;              // IInputAuthKeyProvider
 using NexusFlow.Core.Diagnostics;
 using NexusFlow.Core.InputInjection;
 using NexusFlow.Protocol.Input;
@@ -15,15 +18,18 @@ public sealed class InputReceiver
 	private readonly IDiagnosticsLog _log;
 	private readonly TrustStore _trust;
 	private readonly IInputInjector _injector;
+	private readonly IInputAuthKeyProvider _keys;
 
 	public InputReceiver(
 		IDiagnosticsLog log,
 		TrustStore trust,
-		IInputInjector injector)
+		IInputInjector injector,
+		IInputAuthKeyProvider keys)
 	{
 		_log = log;
 		_trust = trust;
 		_injector = injector;
+		_keys = keys;
 	}
 
 	public async Task HandleFirstFrameAsync(
@@ -32,22 +38,40 @@ public sealed class InputReceiver
 		byte[] firstPayload,
 		CancellationToken ct)
 	{
-		InputHelloV1 hello;
+		// ---- Expect authenticated hello (V2) ----
+		InputHelloV2 hello;
 		try
 		{
-			hello = InputCodec.Decode<InputHelloV1>(firstPayload);
+			hello = InputCodec.Decode<InputHelloV2>(firstPayload);
 		}
 		catch
 		{
-			client.Close();
+			// If you want strict-only V2, just close. (Recommended)
+			try { client.Close(); } catch { }
 			return;
 		}
 
-		// ---- F.4 trust enforcement (already done) ----
+		// ---- F.4 trust enforcement ----
 		if (!IsTrustedPeer(hello.FromPeerId))
 		{
 			_log.Warn(Cat, $"Rejecting INPUT from untrusted peer={hello.FromPeerId}");
-			client.Close();
+			try { client.Close(); } catch { }
+			return;
+		}
+
+		// ---- F.5 authenticated hello enforcement ----
+		// Must have an authenticated CONTROL session for this peer (key provider is ConnectionManager)
+		if (!_keys.TryGetInputAuthKey(hello.FromPeerId, out var inputAuthKey) || inputAuthKey.Length == 0)
+		{
+			_log.Warn(Cat, $"Rejecting INPUT from peer={hello.FromPeerId}: no InputAuthKey (no authenticated control session?)");
+			try { client.Close(); } catch { }
+			return;
+		}
+
+		if (!VerifyHelloMac(inputAuthKey, hello))
+		{
+			_log.Warn(Cat, $"Rejecting INPUT from peer={hello.FromPeerId}: hello MAC invalid");
+			try { client.Close(); } catch { }
 			return;
 		}
 
@@ -57,7 +81,7 @@ public sealed class InputReceiver
 		{
 			while (!ct.IsCancellationRequested)
 			{
-				var (type, payload) = await FramingV2.ReadAsync(stream, ct);
+				var (type, payload) = await FramingV2.ReadAsync(stream, ct).ConfigureAwait(false);
 				if (type != MessageType.Input)
 					continue;
 
@@ -77,6 +101,25 @@ public sealed class InputReceiver
 			_injector.Reset();
 			_log.Info(Cat, $"RX input channel closed from {hello.FromPeerId}");
 		}
+	}
+
+	private static bool VerifyHelloMac(byte[] key, InputHelloV2 hello)
+	{
+		// Mac = HMAC-SHA256(key, FromPeerId || 0x00 || TimestampUtcTicks(le) || Nonce)
+		using var h = new HMACSHA256(key);
+
+		var idBytes = Encoding.UTF8.GetBytes(hello.FromPeerId);
+		var tsBytes = BitConverter.GetBytes(hello.TimestampUtcTicks); // little-endian
+		var nonce = hello.Nonce ?? Array.Empty<byte>();
+
+		var msg = new byte[idBytes.Length + 1 + tsBytes.Length + nonce.Length];
+		Buffer.BlockCopy(idBytes, 0, msg, 0, idBytes.Length);
+		msg[idBytes.Length] = 0;
+		Buffer.BlockCopy(tsBytes, 0, msg, idBytes.Length + 1, tsBytes.Length);
+		Buffer.BlockCopy(nonce, 0, msg, idBytes.Length + 1 + tsBytes.Length, nonce.Length);
+
+		var expected = h.ComputeHash(msg);
+		return hello.Mac is not null && CryptographicOperations.FixedTimeEquals(expected, hello.Mac);
 	}
 
 	private bool IsTrustedPeer(string peerId)

@@ -43,17 +43,48 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInput
 	public IReadOnlyCollection<ConnectedPeer> Snapshot() => _connected.Values.ToList();
 
 	public bool IsConnected(string peerId) => _connected.ContainsKey(peerId);
+	private static byte[] DeriveControlSessionKey(byte[] trustKey, byte[] transcript)
+	{
+		using var h = new HMACSHA256(trustKey);
+
+		var label = Encoding.UTF8.GetBytes("nexusflow|control-session|v1|");
+		var msg = new byte[label.Length + transcript.Length];
+		Buffer.BlockCopy(label, 0, msg, 0, label.Length);
+		Buffer.BlockCopy(transcript, 0, msg, label.Length, transcript.Length);
+
+		return h.ComputeHash(msg); // 32 bytes
+	}
+
+	private static byte[] DeriveInputAuthKey(byte[] controlSessionKey, string fromPeerId, string toPeerId)
+	{
+		// Domain-separated + directional derivation
+		using var h = new HMACSHA256(controlSessionKey);
+		var msg = Encoding.UTF8.GetBytes($"nexusflow|inputauth|v1|from={fromPeerId}|to={toPeerId}");
+		return h.ComputeHash(msg); // 32 bytes
+	}
 
 	public bool TryGetInputAuthKey(string peerId, out byte[] key)
 	{
-		if (!TryGetControlSessionKey(peerId, out var controlKey))
+		if (!_connected.TryGetValue(peerId, out var peer))
 		{
 			key = Array.Empty<byte>();
 			return false;
 		}
 
-		key = Derive(controlKey);
+		key = peer.InputAuthKey;
 		return true;
+	}
+
+	private bool TryGetControlSessionKey(string peerId, out byte[] controlKey)
+	{
+		if (_connected.TryGetValue(peerId, out var peer))
+		{
+			controlKey = peer.ControlSessionKey;
+			return true;
+		}
+
+		controlKey = Array.Empty<byte>();
+		return false;
 	}
 
 	private static byte[] Derive(byte[] controlKey)
@@ -65,14 +96,6 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInput
 		Buffer.BlockCopy(label, 0, buf, controlKey.Length, label.Length);
 		return sha.ComputeHash(buf);
 	}
-
-	private bool TryGetControlSessionKey(string peerId, out byte[] controlKey)
-	{
-		// IMPLEMENT using your existing authenticated control session store
-		controlKey = Array.Empty<byte>();
-		return false;
-	}
-
 
 	// ------------------------------------------------------------------
 	// IControlBroadcaster
@@ -132,6 +155,9 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInput
 
 		var key = TrustKeys.KeyFromFingerprintHex(trusted.Fingerprint);
 		var mac = TrustKeys.ComputeMac(key, BuildTranscript(hello, remoteHello));
+		var transcript = BuildTranscript(hello, remoteHello);
+		var controlSessionKey = DeriveControlSessionKey(key, transcript);
+		var inputAuthKey = DeriveInputAuthKey(controlSessionKey, _me.PeerId, remoteHello.PeerId);
 
 		await FramingV2.WriteAsync(
 			stream,
@@ -145,7 +171,16 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInput
 		if (!result.Accepted)
 			throw new UnauthorizedAccessException(result.Reason);
 
-		AddPeer(new ConnectedPeer(remoteHello.PeerId, remoteHello.DeviceName, address, client, stream));
+		AddPeer(new ConnectedPeer(
+			remoteHello.PeerId,
+			remoteHello.DeviceName,
+			address,
+			client,
+			stream,
+			controlSessionKey,
+			inputAuthKey
+		));
+
 		await SendToPeerAsync(remoteHello.PeerId, new RoutingStateSync(remoteHello.PeerId, _me.PeerId), ct);
 
 		StartLoops(remoteHello.PeerId, ct);
@@ -182,6 +217,9 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInput
 
 		var key = TrustKeys.KeyFromFingerprintHex(trusted.Fingerprint);
 		var expected = TrustKeys.ComputeMac(key, BuildTranscript(helloA, helloB));
+		var transcript = BuildTranscript(helloA, helloB);
+		var controlSessionKey = DeriveControlSessionKey(key, transcript);
+		var inputAuthKey = DeriveInputAuthKey(controlSessionKey, _me.PeerId, helloA.PeerId);
 
 		if (!CryptographicOperations.FixedTimeEquals(expected, auth.Mac))
 		{
@@ -203,7 +241,16 @@ public sealed class ConnectionManager : IControlBroadcaster, IDisposable, IInput
 		);
 
 		var addr = ((IPEndPoint)client.Client.RemoteEndPoint!).Address;
-		AddPeer(new ConnectedPeer(helloA.PeerId, helloA.DeviceName, addr, client, stream));
+		AddPeer(new ConnectedPeer(
+			helloA.PeerId,
+			helloA.DeviceName,
+			addr,
+			client,
+			stream,
+			controlSessionKey,
+			inputAuthKey
+		));
+
 		StartLoops(helloA.PeerId, ct);
 	}
 
@@ -323,16 +370,27 @@ public sealed class ConnectedPeer
 	internal TcpClient Client { get; }
 	internal NetworkStream Stream { get; }
 
+	internal byte[] ControlSessionKey { get; }
+	internal byte[] InputAuthKey { get; }
+
 	private readonly SemaphoreSlim _sendLock = new(1, 1);
 
-	internal ConnectedPeer(string peerId, string deviceName, IPAddress address,
-						   TcpClient client, NetworkStream stream)
+	internal ConnectedPeer(
+		string peerId,
+		string deviceName,
+		IPAddress address,
+		TcpClient client,
+		NetworkStream stream,
+		byte[] controlSessionKey,
+		byte[] inputAuthKey)
 	{
 		PeerId = peerId;
 		DeviceName = deviceName;
 		Address = address;
 		Client = client;
 		Stream = stream;
+		ControlSessionKey = controlSessionKey;
+		InputAuthKey = inputAuthKey;
 	}
 
 	internal async Task SendControlFrameAsync(byte[] payload, CancellationToken ct)
