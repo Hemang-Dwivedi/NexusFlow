@@ -83,9 +83,9 @@ public sealed class LocalInputCaptureOrchestrator : IDisposable
 
 	private void OnMove(CapturedMouseMoveEvent e)
 	{
-		if (ThrottleMouse(e.TimestampUtcTicks)) return;
-		FlipLocalSourceIfNeeded();
 		_out.Writer.TryWrite(BuildMoveEvent(e));
+		if (ThrottleMouse(e.TimestampUtcTicks)) return;
+		FlipLocalSourceIfNeeded();	
 	}
 
 	private void OnButton(CapturedMouseButtonEvent e)
