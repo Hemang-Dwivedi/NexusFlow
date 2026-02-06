@@ -8,6 +8,8 @@ using NexusFlow.Protocol.Input;
 using NexusFlow.Protocol.Transport;
 using NexusFlow.Transport;
 using NexusFlow.Trust;
+using NexusFlow.Core.Services;
+
 
 namespace NexusFlow.Core.InputTransport;
 
@@ -19,17 +21,20 @@ public sealed class InputReceiver
 	private readonly TrustStore _trust;
 	private readonly IInputInjector _injector;
 	private readonly IInputAuthKeyProvider _keys;
+	private readonly IFailsafeService _failsafe;
 
 	public InputReceiver(
 		IDiagnosticsLog log,
 		TrustStore trust,
 		IInputInjector injector,
-		IInputAuthKeyProvider keys)
+		IInputAuthKeyProvider keys,
+		IFailsafeService failsafe)
 	{
 		_log = log;
 		_trust = trust;
 		_injector = injector;
 		_keys = keys;
+		_failsafe = failsafe;
 	}
 
 	public async Task HandleFirstFrameAsync(
@@ -86,8 +91,9 @@ public sealed class InputReceiver
 					continue;
 
 				var ev = InputCodec.Decode<InputEventV1>(payload);
+				if (_failsafe.IsBlocked)
+					continue; // local-only safety: never inject while failsafe ON
 
-				// ---- F.7 injection boundary ----
 				_injector.Inject(ev);
 			}
 		}

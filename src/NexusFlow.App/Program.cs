@@ -160,15 +160,12 @@ namespace NexusFlow.App
 
 					});
 					services.AddSingleton<NexusFlow.Core.InputTransport.OrderedInputRouter>();
-					services.AddSingleton<NexusFlow.Core.InputTransport.InputReceiver>();
 
 					services.AddSingleton<NexusFlow.Core.InputTransport.IInputAuthKeyProvider>(sp =>
 						sp.GetRequiredService<ConnectionManager>());
 
-					services.AddSingleton<NexusFlow.Core.InputTransport.InputSender>();
 					services.AddSingleton<NexusFlow.Core.InputTransport.IRemoteInputSink, NexusFlow.Core.InputTransport.DiagnosticsRemoteInputSink>();
 					// ---------- Input Injection (F.7) ----------
-					services.AddSingleton<IInputInjector, NoopInputInjector>();
 					services.AddSingleton<IInputInjector, WindowsSendInputInjector>();
 
 				});
