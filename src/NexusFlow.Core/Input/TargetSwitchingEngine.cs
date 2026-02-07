@@ -100,7 +100,7 @@ public sealed class TargetSwitchingEngine : IDisposable
 
 		var minX = cluster.Displays.Min(d => d.X);
 		var minY = cluster.Displays.Min(d => d.Y);
-		var maxX = cluster.Displays.Max(d => d.X + d.Width);UInt128 
+		var maxX = cluster.Displays.Max(d => d.X + d.Width);
 		var maxY = cluster.Displays.Max(d => d.Y + d.Height);
 
 		return new RectPx(minX, minY, maxX, maxY);
