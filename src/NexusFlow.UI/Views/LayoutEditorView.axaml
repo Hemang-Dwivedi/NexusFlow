@@ -111,7 +111,16 @@
 
           </DockPanel>
         </Border>
-
+          <TextBlock Foreground="White" VerticalAlignment="Center" Text="Editing:"/>
+  <ComboBox Width="260"
+            ItemsSource="{Binding PeerChoices}"
+            SelectedItem="{Binding SelectedPeer}">
+    <ComboBox.ItemTemplate>
+      <DataTemplate>
+        <TextBlock Text="{Binding DisplayName}" />
+      </DataTemplate>
+    </ComboBox.ItemTemplate>
+  </ComboBox>
       </StackPanel>
     </Border>
   </Border>

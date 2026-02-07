@@ -4,6 +4,8 @@ using NexusFlow.Core.Services;
 using NexusFlow.Display.Layout;
 using NexusFlow.Display.Models;
 using NexusFlow.Settings.Layout;
+using NexusFlow.UI.Services;
+using System.Collections.ObjectModel;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -48,45 +50,43 @@ public partial class LayoutEditorViewModel : ObservableObject
 	private readonly LayoutState _layoutState;
 	private readonly string _peerId;
 	private readonly NexusFlow.Core.Layout.IRuntimeLayoutState _runtimeLayout;
+	private readonly IConnectedPeersSnapshot _connectedPeers;
+
+	public ObservableCollection<PeerChoiceVm> PeerChoices { get; } = new();
+
+	[ObservableProperty] private PeerChoiceVm? selectedPeer;
+
 
 	#region Constructor
 
-	public LayoutEditorViewModel(DisplayService displayService, ILayoutStore layoutStore, NexusFlow.Core.Layout.IRuntimeLayoutState runtimeLayout)
-	{
-		_displayService = displayService;
-		_layoutStore = layoutStore;
+	    public LayoutEditorViewModel(DisplayService displayService, ILayoutStore layoutStore, IConnectedPeersSnapshot connectedPeers)
+    {
+        _displayService = displayService;
+        _layoutStore = layoutStore;
+        _connectedPeers = connectedPeers;
 
-		LocalCluster = _displayService.GetLocalCluster();
-		_peerId = LocalCluster.PeerId;
+        LocalCluster = _displayService.GetLocalCluster();
+        _peerId = LocalCluster.PeerId;
 
-		_runtimeLayout = runtimeLayout;
+        CanvasWidth = 900;
+        CanvasHeight = 400;
+        Normalized = DisplayLayoutNormalizer.Normalize(LocalCluster, CanvasWidth, CanvasHeight);
+		
+		UpdateClusterBounds();
 
-		CanvasWidth = 900;
-		CanvasHeight = 400;
-		Normalized = DisplayLayoutNormalizer.Normalize(LocalCluster, CanvasWidth, CanvasHeight);
+        _layoutState = _layoutStore.Load(); // your existing load logic
 
-		UpdateClusterBoundsLocalPixels();
+        // peer dropdown
+        RefreshPeerChoices();
+        _connectedPeers.Changed += OnConnectedPeersChanged;
 
-		// Load persisted state
-		_layoutState = _layoutStore.Load();
+        // default selection = local
+        selectedPeer = PeerChoices.FirstOrDefault(p => p.PeerId == _peerId);
+    }
 
-		if (_layoutState.Peers.TryGetValue(_peerId, out var peer))
-		{
-			AppliedOffsetX = peer.AppliedOffsetX;
-			AppliedOffsetY = peer.AppliedOffsetY;
-			DraftOffsetX = peer.AppliedOffsetX;
-			DraftOffsetY = peer.AppliedOffsetY;
-		}
-		else
-		{
-			AppliedOffsetX = 0;
-			AppliedOffsetY = 0;
-			DraftOffsetX = 0;
-			DraftOffsetY = 0;
-		}
+    
 
-		RefreshDirtyState();
-	}
+
 	#endregion
 	private void PublishRuntimeLayout()
 	{
@@ -104,6 +104,25 @@ public partial class LayoutEditorViewModel : ObservableObject
 		_runtimeLayout.Set(snap);
 	}
 
+	private void OnConnectedPeersChanged()
+		=> Avalonia.Threading.Dispatcher.UIThread.Post(RefreshPeerChoices);
+
+	private void RefreshPeerChoices()
+	{
+		var snapshot = _connectedPeers.Snapshot();
+
+		PeerChoices.Clear();
+
+		// Always include local first
+		PeerChoices.Add(new PeerChoiceVm(_peerId, $"{LocalCluster.PeerName} (This PC)", isLocal: true));
+
+		foreach (var p in snapshot.OrderBy(x => x.DeviceName))
+		{
+			// exclude local if it ever appears
+			if (p.PeerId == _peerId) continue;
+			PeerChoices.Add(new PeerChoiceVm(p.PeerId, p.DeviceName, isLocal: false));
+		}
+	}
 	private void RefreshDirtyState()
 	{
 		IsDirty = Math.Abs(DraftOffsetX - AppliedOffsetX) > 0.01
@@ -113,7 +132,7 @@ public partial class LayoutEditorViewModel : ObservableObject
 		RevertCommand.NotifyCanExecuteChanged();
 	}
 
-	private void UpdateClusterBoundsLocalPixels()
+	private void UpdateClusterBounds()
 	{
 		if (LocalCluster.Displays.Count == 0)
 		{
@@ -265,6 +284,7 @@ public partial class LayoutEditorViewModel : ObservableObject
 	private bool CanRevert() => IsDirty;
 }
 
+public sealed record PeerChoiceVm(string PeerId, string DisplayName, bool isLocal);
 public sealed class PeerBlockVm
 {
 	public string PeerId { get; }

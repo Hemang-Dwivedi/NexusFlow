@@ -7,6 +7,8 @@ using NexusFlow.Core.Services;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using NexusFlow.Core.Input;
+using NexusFlow.UI.Services;
+using NexusFlow.Core.Control;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -135,10 +137,4 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 			if (p.PeerId == peerId) return p;
 		return null;
 	}
-}
-
-public interface IConnectedPeersSnapshot
-{
-	string LocalPeerId { get; }
-	ObservableCollection<(string PeerId, string DisplayName)> ConnectedPeers { get; }
 }

@@ -1,37 +1,52 @@
 ﻿using System.Collections.ObjectModel;
 using NexusFlow.Core.Control;
-using NexusFlow.Identity;
-using NexusFlow.UI.ViewModels;
 
 namespace NexusFlow.UI.Services;
 
-public sealed class ConnectedPeersSnapshot : IConnectedPeersSnapshot
+public interface IConnectedPeersSnapshot
 {
+	string? LocalPeerId { get; }
+	ObservableCollection<(string PeerId, string DisplayName)> ConnectedPeers { get; }
+	IReadOnlyList<ConnectedPeer> Snapshot();
+	event Action? Changed;
+}
+
+public sealed class ConnectedPeersSnapshot : IConnectedPeersSnapshot, IDisposable
+{
+	public string? LocalPeerId { get; }
+	public ObservableCollection<(string PeerId, string DisplayName)> ConnectedPeers { get; } = new();
 	private readonly ConnectionManager _connections;
+	private readonly object _gate = new();
 
-	public string LocalPeerId { get; }
+	private List<ConnectedPeer> _cache = new();
 
-	public ObservableCollection<(string PeerId, string DisplayName)> ConnectedPeers { get; }
-		= new();
+	public event Action? Changed;
 
-	public ConnectedPeersSnapshot(ConnectionManager connections, ILocalIdentity identity)
+	public ConnectedPeersSnapshot(ConnectionManager connections)
 	{
 		_connections = connections;
-		LocalPeerId = identity.PeerId;
 
-		Refresh();
+		// init cache
+		_cache = _connections.Snapshot().ToList();
 
-		_connections.PeerConnected += _ => Refresh();
-		_connections.PeerDisconnected += _ => Refresh();
+		_connections.PeerConnected += OnPeerChanged;
+		_connections.PeerDisconnected += _ => OnPeerChanged(null);
 	}
 
-	private void Refresh()
+	private void OnPeerChanged(ConnectedPeer? _)
 	{
-		ConnectedPeers.Clear();
+		lock (_gate) _cache = _connections.Snapshot().ToList();
+		Changed?.Invoke();
+	}
 
-		ConnectedPeers.Add((LocalPeerId, "(This device)"));
+	public IReadOnlyList<ConnectedPeer> Snapshot()
+	{
+		lock (_gate) return _cache.ToList();
+	}
 
-		foreach (var p in _connections.Snapshot())
-			ConnectedPeers.Add((p.PeerId, p.DeviceName));
+	public void Dispose()
+	{
+		_connections.PeerConnected -= OnPeerChanged;
+		_connections.PeerDisconnected -= _ => OnPeerChanged(null); // if you used lambda, store delegate instead
 	}
 }

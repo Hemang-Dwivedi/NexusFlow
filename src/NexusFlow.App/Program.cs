@@ -107,7 +107,7 @@ namespace NexusFlow.App
 					{
 						var displayService = sp.GetRequiredService<DisplayService>();
 						var store = sp.GetRequiredService<JsonLayoutStore>();
-						var runtime = sp.GetRequiredService<NexusFlow.Core.Layout.IRuntimeLayoutState>();
+						var runtime = sp.GetRequiredService<IConnectedPeersSnapshot>();
 						return new LayoutEditorViewModel(displayService, store, runtime);
 					});
 
