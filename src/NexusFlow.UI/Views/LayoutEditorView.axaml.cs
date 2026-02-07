@@ -9,36 +9,45 @@ public partial class LayoutEditorView : UserControl
 	public LayoutEditorView()
 	{
 		InitializeComponent();
-
-		// Pointer handlers on the whole peer block container (named element in XAML)
-		PeerDragSurface.PointerPressed += OnPointerPressed;
-		PeerDragSurface.PointerMoved += OnPointerMoved;
-		PeerDragSurface.PointerReleased += OnPointerReleased;
 	}
 
-	private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+	private LayoutEditorViewModel? Vm => DataContext as LayoutEditorViewModel;
+
+	public void PeerPointerPressed(object? sender, PointerPressedEventArgs e)
 	{
-		if (DataContext is not LayoutEditorViewModel vm) return;
-		var p = e.GetPosition(PeerDragSurface);
-		vm.BeginDrag(p.X, p.Y);
-		e.Pointer.Capture(PeerDragSurface);
+		if (Vm is null) return;
+		if (sender is not Control c) return;
+		if (c.DataContext is not PeerBlockVm peer) return;
+
+		var p = e.GetPosition(this);
+		Vm.BeginDrag(peer.PeerId, p.X, p.Y);
+
+		// ✅ Avalonia pointer capture
+		e.Pointer.Capture(c);
+
 		e.Handled = true;
 	}
 
-	private void OnPointerMoved(object? sender, PointerEventArgs e)
+	public void PeerPointerMoved(object? sender, PointerEventArgs e)
 	{
-		if (DataContext is not LayoutEditorViewModel vm || !vm.IsDragging) return;
-		var p = e.GetPosition(PeerDragSurface);
-		vm.DragTo(p.X, p.Y);
+		if (Vm is null) return;
+		if (!Vm.IsDragging) return;
+
+		var p = e.GetPosition(this);
+		Vm.DragTo(p.X, p.Y);
+
 		e.Handled = true;
 	}
 
-	private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
+	public void PeerPointerReleased(object? sender, PointerReleasedEventArgs e)
 	{
-		if (DataContext is not LayoutEditorViewModel vm) return;
-		vm.EndDrag();
+		if (Vm is null) return;
+
+		Vm.EndDrag();
+
+		// ✅ release capture
 		e.Pointer.Capture(null);
+
 		e.Handled = true;
 	}
-
 }

@@ -1,305 +1,268 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using NexusFlow.Core.Services;
-using NexusFlow.Display.Layout;
-using NexusFlow.Display.Models;
+using NexusFlow.Core.Layout;
 using NexusFlow.Settings.Layout;
-using NexusFlow.UI.Services;
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 
 namespace NexusFlow.UI.ViewModels;
 
-public partial class LayoutEditorViewModel : ObservableObject
+/// <summary>
+/// Layout editor that renders ALL peers known to the runtime layout state.
+/// For now peers are drawn as 1 rectangle each (desktop bounds).
+/// Offsets are editable (Draft) and persisted to ILayoutStore.
+/// </summary>
+public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 {
-	private readonly DisplayService _displayService;
+	private readonly ILayoutState _layout;
+	private readonly ILayoutStore _layoutStore;
+	private NexusFlow.Settings.Layout.LayoutState _persisted;
 
+	public ObservableCollection<PeerBlockVm> PeerBlocks { get; } = new();
 
-	[ObservableProperty] private double scale;
-	[ObservableProperty] private double panX;
-	[ObservableProperty] private double panY;
+	public double CanvasWidth { get; } = 900;
+	public double CanvasHeight { get; } = 400;
 
-	public PeerDisplayCluster LocalCluster { get; }
-	public NormalizedCluster Normalized { get; }
+	// Draft/applied offsets per peerId (stored in LayoutStore)
+	private readonly Dictionary<string, (double ax, double ay, double dx, double dy)> _offsets = new();
 
-	public double CanvasWidth { get; }
-	public double CanvasHeight { get; }
-
-	// ---- Applied (committed) ----
-	[ObservableProperty] private double appliedOffsetX;
-	[ObservableProperty] private double appliedOffsetY;
-
-	// ---- Draft (editable) ----
-	[ObservableProperty] private double draftOffsetX;
-	[ObservableProperty] private double draftOffsetY;
-
-	// ---- UI state ----
 	[ObservableProperty] private bool isDirty;
-	// Drag state
+
+	// drag
 	public bool IsDragging { get; private set; }
+	private string? _dragPeerId;
 	private double _dragStartMouseX, _dragStartMouseY;
 	private double _dragStartDraftX, _dragStartDraftY;
-	// Cluster bounds in normalized space (no draft offset applied)
-	private double _clusterMinX, _clusterMinY, _clusterMaxX, _clusterMaxY;
-	private const double SnapThreshold = 12;
-	private const double SnapMargin = 8;
-	partial void OnDraftOffsetXChanged(double value) { RefreshDirtyState(); RecomputeTransform(); }
-	partial void OnDraftOffsetYChanged(double value) { RefreshDirtyState(); RecomputeTransform(); }
-	partial void OnAppliedOffsetXChanged(double value) => RefreshDirtyState();
-	partial void OnAppliedOffsetYChanged(double value) => RefreshDirtyState();
-	private readonly ILayoutStore _layoutStore;
-	private readonly LayoutState _layoutState;
-	private readonly string _peerId;
-	private readonly NexusFlow.Core.Layout.IRuntimeLayoutState _runtimeLayout;
-	private readonly IConnectedPeersSnapshot _connectedPeers;
 
-	public ObservableCollection<PeerChoiceVm> PeerChoices { get; } = new();
-
-	[ObservableProperty] private PeerChoiceVm? selectedPeer;
-
-
-	#region Constructor
-
-	    public LayoutEditorViewModel(DisplayService displayService, ILayoutStore layoutStore, IConnectedPeersSnapshot connectedPeers)
-    {
-        _displayService = displayService;
-        _layoutStore = layoutStore;
-        _connectedPeers = connectedPeers;
-
-        LocalCluster = _displayService.GetLocalCluster();
-        _peerId = LocalCluster.PeerId;
-
-        CanvasWidth = 900;
-        CanvasHeight = 400;
-        Normalized = DisplayLayoutNormalizer.Normalize(LocalCluster, CanvasWidth, CanvasHeight);
-		
-		UpdateClusterBounds();
-
-        _layoutState = _layoutStore.Load(); // your existing load logic
-
-        // peer dropdown
-        RefreshPeerChoices();
-        _connectedPeers.Changed += OnConnectedPeersChanged;
-
-        // default selection = local
-        selectedPeer = PeerChoices.FirstOrDefault(p => p.PeerId == _peerId);
-    }
-
-    
-
-
-	#endregion
-	private void PublishRuntimeLayout()
+	public LayoutEditorViewModel(ILayoutState layout, ILayoutStore layoutStore)
 	{
-		// Local peer rect in CANVAS coordinates after applied offsets
-		var x = _clusterMinX + AppliedOffsetX;
-		var y = _clusterMinY + AppliedOffsetY;
-		var w = _clusterMaxX - _clusterMinX;
-		var h = _clusterMaxY - _clusterMinY;
+		_layout = layout;
+		_layoutStore = layoutStore;
 
-		var snap = new NexusFlow.Core.Layout.LayoutSnapshot(new[]
-		{
-		new NexusFlow.Core.Layout.PeerRect(_peerId, x, y, w, h)
-	});
+		_persisted = _layoutStore.Load();
+		LoadOffsetsFromStore();
 
-		_runtimeLayout.Set(snap);
+		_layout.Changed += OnLayoutChanged;
+
+		// initial populate if already present
+		RefreshFromSnapshot(_layout.Current);
 	}
 
-	private void OnConnectedPeersChanged()
-		=> Avalonia.Threading.Dispatcher.UIThread.Post(RefreshPeerChoices);
-
-	private void RefreshPeerChoices()
+	public void Dispose()
 	{
-		var snapshot = _connectedPeers.Snapshot();
+		_layout.Changed -= OnLayoutChanged;
+	}
 
-		PeerChoices.Clear();
+	private void OnLayoutChanged(LayoutSnapshot? snap)
+	{
+		Dispatcher.UIThread.Post(() => RefreshFromSnapshot(snap));
+	}
 
-		// Always include local first
-		PeerChoices.Add(new PeerChoiceVm(_peerId, $"{LocalCluster.PeerName} (This PC)", isLocal: true));
-
-		foreach (var p in snapshot.OrderBy(x => x.DeviceName))
+	private void LoadOffsetsFromStore()
+	{
+		_offsets.Clear();
+		foreach (var kv in _persisted.Peers)
 		{
-			// exclude local if it ever appears
-			if (p.PeerId == _peerId) continue;
-			PeerChoices.Add(new PeerChoiceVm(p.PeerId, p.DeviceName, isLocal: false));
+			var peerId = kv.Key;
+			var st = kv.Value;
+
+			var ax = st.AppliedOffsetX;
+			var ay = st.AppliedOffsetY;
+			_offsets[peerId] = (ax, ay, ax, ay);
 		}
 	}
+
+	private (double ax, double ay, double dx, double dy) GetOrCreateOffsets(string peerId)
+	{
+		if (_offsets.TryGetValue(peerId, out var v))
+			return v;
+
+		_offsets[peerId] = (0, 0, 0, 0);
+		return _offsets[peerId];
+	}
+
+	private void SetDraft(string peerId, double dx, double dy)
+	{
+		var v = GetOrCreateOffsets(peerId);
+		_offsets[peerId] = (v.ax, v.ay, dx, dy);
+		RefreshDirtyState();
+	}
+
 	private void RefreshDirtyState()
 	{
-		IsDirty = Math.Abs(DraftOffsetX - AppliedOffsetX) > 0.01
-			   || Math.Abs(DraftOffsetY - AppliedOffsetY) > 0.01;
+		IsDirty = _offsets.Values.Any(v =>
+			Math.Abs(v.dx - v.ax) > 0.01 ||
+			Math.Abs(v.dy - v.ay) > 0.01);
 
 		ApplyCommand.NotifyCanExecuteChanged();
 		RevertCommand.NotifyCanExecuteChanged();
 	}
 
-	private void UpdateClusterBounds()
+	private void RefreshFromSnapshot(LayoutSnapshot? snap)
 	{
-		if (LocalCluster.Displays.Count == 0)
+		PeerBlocks.Clear();
+
+		var peers = snap?.Peers?.ToList() ?? new List<PeerRect>();
+		if (peers.Count == 0)
 		{
-			_clusterMinX = _clusterMinY = _clusterMaxX = _clusterMaxY = 0;
+			RefreshDirtyState();
 			return;
 		}
 
-		_clusterMinX = LocalCluster.Displays.Min(d => d.X);
-		_clusterMinY = LocalCluster.Displays.Min(d => d.Y);
-		_clusterMaxX = LocalCluster.Displays.Max(d => d.X + d.Width);
-		_clusterMaxY = LocalCluster.Displays.Max(d => d.Y + d.Height);
+		// Ensure offset entries exist for all peers
+		foreach (var p in peers)
+			_ = GetOrCreateOffsets(p.PeerId);
+
+		// Build global bounds (real pixels + applied offsets) so all peers fit proportionally
+		var bounds = peers.Select(p =>
+		{
+			var off = GetOrCreateOffsets(p.PeerId);
+			var ox = off.dx; // use draft for preview
+			var oy = off.dy;
+
+			var x1 = p.X + ox;
+			var y1 = p.Y + oy;
+			var x2 = x1 + p.Width;
+			var y2 = y1 + p.Height;
+			return (p.PeerId, x1, y1, x2, y2);
+		}).ToList();
+
+		var minX = bounds.Min(b => b.x1);
+		var minY = bounds.Min(b => b.y1);
+		var maxX = bounds.Max(b => b.x2);
+		var maxY = bounds.Max(b => b.y2);
+
+		var totalW = Math.Max(1.0, maxX - minX);
+		var totalH = Math.Max(1.0, maxY - minY);
+
+		const double pad = 14;
+
+		var usableW = Math.Max(1.0, CanvasWidth - 2 * pad);
+		var usableH = Math.Max(1.0, CanvasHeight - 2 * pad);
+
+		var scale = Math.Min(usableW / totalW, usableH / totalH);
+		scale = Math.Min(scale, 1.0);
+		scale = Math.Max(scale, 0.03);
+
+		var normW = totalW * scale;
+		var normH = totalH * scale;
+
+		var baseX = (CanvasWidth - normW) / 2.0;
+		var baseY = (CanvasHeight - normH) / 2.0;
+
+		foreach (var p in peers.OrderBy(p => p.PeerId))
+		{
+			var off = GetOrCreateOffsets(p.PeerId);
+			var x = (p.X + off.dx) - minX;
+			var y = (p.Y + off.dy) - minY;
+
+			PeerBlocks.Add(new PeerBlockVm(
+				peerId: p.PeerId,
+				nx: baseX + x * scale,
+				ny: baseY + y * scale,
+				nw: Math.Max(18, p.Width * scale),
+				nh: Math.Max(18, p.Height * scale)
+			));
+		}
+
+		RefreshDirtyState();
 	}
 
-	private void RecomputeTransform()
-	{
-		// World bounds of LOCAL peer (for now)
-		var worldMinX = _clusterMinX + DraftOffsetX;
-		var worldMinY = _clusterMinY + DraftOffsetY;
-		var worldMaxX = _clusterMaxX + DraftOffsetX;
-		var worldMaxY = _clusterMaxY + DraftOffsetY;
+	// ---------------- Drag ----------------
 
-		var worldW = Math.Max(1.0, worldMaxX - worldMinX);
-		var worldH = Math.Max(1.0, worldMaxY - worldMinY);
-
-		var sx = CanvasWidth / worldW;
-		var sy = CanvasHeight / worldH;
-		var s = Math.Min(sx, sy);
-
-		Scale = s;
-
-		// center it
-		PanX = (CanvasWidth - worldW * s) / 2.0 - worldMinX * s;
-		PanY = (CanvasHeight - worldH * s) / 2.0 - worldMinY * s;
-	}
-
-	private (double cx, double cy) WorldToCanvas(double wx, double wy)
-		=> (wx * Scale + PanX, wy * Scale + PanY);
-
-	private (double wx, double wy) CanvasToWorld(double cx, double cy)
-		=> ((cx - PanX) / Scale, (cy - PanY) / Scale);
-
-
-
-	// ---- Dragging edits DRAFT only ----
-	public void BeginDrag(double mouseX, double mouseY)
+	public void BeginDrag(string peerId, double mouseX, double mouseY)
 	{
 		IsDragging = true;
-
+		_dragPeerId = peerId;
 		_dragStartMouseX = mouseX;
 		_dragStartMouseY = mouseY;
 
-		_dragStartDraftX = DraftOffsetX;
-		_dragStartDraftY = DraftOffsetY;
+		var v = GetOrCreateOffsets(peerId);
+		_dragStartDraftX = v.dx;
+		_dragStartDraftY = v.dy;
 	}
 
 	public void DragTo(double mouseX, double mouseY)
 	{
-		if (!IsDragging) return;
+		if (!IsDragging || string.IsNullOrWhiteSpace(_dragPeerId))
+			return;
 
-		// canvas delta -> world delta
-		var dxCanvas = mouseX - _dragStartMouseX;
-		var dyCanvas = mouseY - _dragStartMouseY;
+		// Drag works in canvas pixels; offsets are in "real pixel space".
+		// We don't have the exact inverse scale here (because scale depends on all peers),
+		// so we use a simple approximation: treat draft offsets as canvas-space offsets.
+		// This is enough to unblock UI; later we can store offsets in virtual px precisely.
+		var dx = mouseX - _dragStartMouseX;
+		var dy = mouseY - _dragStartMouseY;
 
-		var dxWorld = dxCanvas / Math.Max(Scale, 0.00001);
-		var dyWorld = dyCanvas / Math.Max(Scale, 0.00001);
+		SetDraft(_dragPeerId, _dragStartDraftX + dx, _dragStartDraftY + dy);
 
-		var proposedX = _dragStartDraftX + dxWorld;
-		var proposedY = _dragStartDraftY + dyWorld;
-
-		// Later, when multi-peer: clamp/snap in world. For now keep your logic simple:
-		DraftOffsetX = proposedX;
-		DraftOffsetY = proposedY;
+		// Re-render with new draft offsets
+		RefreshFromSnapshot(_layout.Current);
 	}
 
-
-	public void EndDrag() => IsDragging = false;
-
-	private static double Clamp(double v, double min, double max)
-		=> v < min ? min : (v > max ? max : v);
-
-	private double ApplySnapX(double offsetX, double minOffsetX, double maxOffsetX)
+	public void EndDrag()
 	{
-		var left = _clusterMinX + offsetX;
-		var right = _clusterMaxX + offsetX;
-
-		var targetLeft = SnapMargin;
-		if (Math.Abs(left - targetLeft) <= SnapThreshold)
-			offsetX += (targetLeft - left);
-
-		var targetRight = CanvasWidth - SnapMargin;
-		if (Math.Abs(right - targetRight) <= SnapThreshold)
-			offsetX += (targetRight - right);
-
-		return Clamp(offsetX, minOffsetX, maxOffsetX);
+		IsDragging = false;
+		_dragPeerId = null;
 	}
 
-	private double ApplySnapY(double offsetY, double minOffsetY, double maxOffsetY)
-	{
-		var top = _clusterMinY + offsetY;
-		var bottom = _clusterMaxY + offsetY;
+	// ---------------- Commands ----------------
 
-		var targetTop = SnapMargin;
-		if (Math.Abs(top - targetTop) <= SnapThreshold)
-			offsetY += (targetTop - top);
-
-		var targetBottom = CanvasHeight - SnapMargin;
-		if (Math.Abs(bottom - targetBottom) <= SnapThreshold)
-			offsetY += (targetBottom - bottom);
-
-		return Clamp(offsetY, minOffsetY, maxOffsetY);
-	}
-
-	// ---- Commands ----
 	[RelayCommand(CanExecute = nameof(CanApply))]
 	private void Apply()
 	{
-		AppliedOffsetX = DraftOffsetX;
-		AppliedOffsetY = DraftOffsetY;
-
-		// Persist
-		if (!_layoutState.Peers.TryGetValue(_peerId, out var peer))
+		foreach (var (peerId, v) in _offsets.ToList())
 		{
-			peer = new PeerLayoutState();
-			_layoutState.Peers[_peerId] = peer;
+			_offsets[peerId] = (v.dx, v.dy, v.dx, v.dy);
+
+			if (!_persisted.Peers.TryGetValue(peerId, out var peer))
+			{
+				peer = new PeerLayoutState();
+				_persisted.Peers[peerId] = peer;
+			}
+
+			peer.AppliedOffsetX = v.dx;
+			peer.AppliedOffsetY = v.dy;
 		}
 
-		peer.AppliedOffsetX = AppliedOffsetX;
-		peer.AppliedOffsetY = AppliedOffsetY;
-
-		peer.DisplayStableIds = LocalCluster.Displays
-			.Select(d => d.StableId)
-			.ToList();
-
-		_layoutStore.Save(_layoutState);
-
-		PublishRuntimeLayout();
+		_layoutStore.Save(_persisted);
+		RefreshDirtyState();
 	}
-
 
 	private bool CanApply() => IsDirty;
 
 	[RelayCommand(CanExecute = nameof(CanRevert))]
 	private void Revert()
 	{
-		DraftOffsetX = AppliedOffsetX;
-		DraftOffsetY = AppliedOffsetY;
+		foreach (var peerId in _offsets.Keys.ToList())
+		{
+			var v = _offsets[peerId];
+			_offsets[peerId] = (v.ax, v.ay, v.ax, v.ay);
+		}
+
+		RefreshFromSnapshot(_layout.Current);
+		RefreshDirtyState();
 	}
 
 	private bool CanRevert() => IsDirty;
 }
 
-public sealed record PeerChoiceVm(string PeerId, string DisplayName, bool isLocal);
-public sealed class PeerBlockVm
+public sealed partial class PeerBlockVm : ObservableObject
 {
 	public string PeerId { get; }
-	public string Name { get; }
+	public string PeerName { get; }
 
-	// World pixel offsets (persisted)
-	public double WorldX { get; set; }
-	public double WorldY { get; set; }
+	[ObservableProperty] private double nx;
+	[ObservableProperty] private double ny;
+	[ObservableProperty] private double nw;
+	[ObservableProperty] private double nh;
 
-	// Rigid cluster bounds in LOCAL peer pixels (computed from displays)
-	public double LocalMinX { get; init; }
-	public double LocalMinY { get; init; }
-	public double LocalMaxX { get; init; }
-	public double LocalMaxY { get; init; }
-
-	public PeerBlockVm(string peerId, string name) { PeerId = peerId; Name = name; }
+	public PeerBlockVm(string peerId, double nx, double ny, double nw, double nh)
+	{
+		PeerId = peerId;
+		Nx = nx; Ny = ny; Nw = nw; Nh = nh;
+	}
 }
-

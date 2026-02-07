@@ -105,10 +105,9 @@ namespace NexusFlow.App
 					services.AddSingleton<NexusFlow.Core.Layout.IRuntimeLayoutState, NexusFlow.Core.Layout.RuntimeLayoutState>();
 					services.AddSingleton<LayoutEditorViewModel>(sp =>
 					{
-						var displayService = sp.GetRequiredService<DisplayService>();
+						var layoutState = sp.GetRequiredService<Core.Layout.ILayoutState>();
 						var store = sp.GetRequiredService<JsonLayoutStore>();
-						var runtime = sp.GetRequiredService<IConnectedPeersSnapshot>();
-						return new LayoutEditorViewModel(displayService, store, runtime);
+						return new LayoutEditorViewModel(layoutState, store);
 					});
 
 
@@ -173,6 +172,8 @@ namespace NexusFlow.App
 					services.AddSingleton<IInputInjector, WindowsSendInputInjector>();
 					// Core layout runtime
 					services.AddSingleton<NexusFlow.Core.Layout.ILayoutState, NexusFlow.Core.Layout.LayoutState>();
+					services.AddHostedService<NexusFlow.Core.Layout.LayoutSyncHostedService>();
+
 
 					// Cursor tracker
 					services.AddSingleton<NexusFlow.Input.ICursorTracker, NexusFlow.Input.CursorTracker>();

@@ -48,7 +48,7 @@ public sealed class ConnectedPeersSnapshot : IConnectedPeersSnapshot, IDisposabl
 		lock (_gate) _cache = _connections.Snapshot().ToList();
 		Changed?.Invoke();
 		Refresh();
-	}
+	}	
 
 	public IReadOnlyList<ConnectedPeer> Snapshot()
 	{
