@@ -28,15 +28,26 @@ public sealed class ConnectedPeersSnapshot : IConnectedPeersSnapshot, IDisposabl
 
 		// init cache
 		_cache = _connections.Snapshot().ToList();
-
+		Refresh();
 		_connections.PeerConnected += OnPeerChanged;
 		_connections.PeerDisconnected += _ => OnPeerChanged(null);
+	}
+
+	private void Refresh()
+	{
+		ConnectedPeers.Clear();
+
+		ConnectedPeers.Add((LocalPeerId, "(This device)"));
+
+		foreach (var p in _connections.Snapshot())
+			ConnectedPeers.Add((p.PeerId, p.DeviceName));
 	}
 
 	private void OnPeerChanged(ConnectedPeer? _)
 	{
 		lock (_gate) _cache = _connections.Snapshot().ToList();
 		Changed?.Invoke();
+		Refresh();
 	}
 
 	public IReadOnlyList<ConnectedPeer> Snapshot()
