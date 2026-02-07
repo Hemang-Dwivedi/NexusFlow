@@ -2,84 +2,210 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="NexusFlow.UI.Views.LayoutEditorView">
 
-  <Border Background="#111" Padding="16">
-    <Border Background="#1E1E1E"
-            BorderBrush="#444"
-            BorderThickness="1"
-            CornerRadius="10"
-            Padding="12">
+  <!-- RESOURCES (only keyed resources here) -->
+  <UserControl.Resources>
+    <SolidColorBrush x:Key="Bg" Color="#0E0F12"/>
+    <SolidColorBrush x:Key="Card" Color="#16181D"/>
+    <SolidColorBrush x:Key="Card2" Color="#1C1F26"/>
+    <SolidColorBrush x:Key="Stroke" Color="#2C313C"/>
+    <SolidColorBrush x:Key="StrokeSoft" Color="#232832"/>
+    <SolidColorBrush x:Key="Text" Color="#E7EAF0"/>
+    <SolidColorBrush x:Key="TextDim" Color="#A6AFBF"/>
 
-      <StackPanel Spacing="12">
+    <SolidColorBrush x:Key="Accent" Color="#3B82F6"/>
+    <SolidColorBrush x:Key="Accent2" Color="#2563EB"/>
+  </UserControl.Resources>
 
-        <!-- Command bar -->
-        <StackPanel Orientation="Horizontal" Spacing="8">
-          <Button Content="Revert"
-                  Command="{Binding RevertCommand}"
-                  IsEnabled="{Binding IsDirty}"
-                  Width="90" />
+  <!-- STYLES (must NOT be inside Resources) -->
+  <UserControl.Styles>
+    <Style Selector="Button.layoutBtn">
+      <Setter Property="Background" Value="{StaticResource Card2}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Stroke}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    </Style>
 
-          <Button Content="Apply"
-                  Command="{Binding ApplyCommand}"
-                  IsEnabled="{Binding IsDirty}"
-                  Width="90" />
-        </StackPanel>
+    <Style Selector="Button.layoutBtn:disabled">
+      <Setter Property="Opacity" Value="0.45"/>
+    </Style>
 
-        <!-- Layout canvas -->
-        <Border Background="#0B0B0B"
-                BorderBrush="#333"
+    <Style Selector="Button.primaryBtn">
+      <Setter Property="Background" Value="{StaticResource Accent2}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+      <Setter Property="Foreground" Value="White"/>
+    </Style>
+
+    <Style Selector="Border.peerCard">
+      <Setter Property="Background" Value="{StaticResource Card}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Stroke}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="12"/>
+      <Setter Property="Padding" Value="12"/>
+    </Style>
+
+    <Style Selector="Border.monitorTile">
+      <Setter Property="Background" Value="#0B1220"/>
+      <Setter Property="BorderBrush" Value="#334155"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="8"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Border Background="{StaticResource Bg}" Padding="16">
+
+    <Grid RowDefinitions="Auto,*"
+          ColumnDefinitions="*"
+          RowSpacing="12">
+
+      <!-- Header -->
+      <Border Grid.Row="0"
+              Background="{StaticResource Card}"
+              BorderBrush="{StaticResource Stroke}"
+              BorderThickness="1"
+              CornerRadius="12"
+              Padding="14">
+        <DockPanel LastChildFill="True">
+
+          <StackPanel DockPanel.Dock="Left" Spacing="2">
+            <TextBlock Text="Layout"
+                       Foreground="{StaticResource Text}"
+                       FontSize="18"
+                       FontWeight="SemiBold"/>
+            <TextBlock Text="Arrange screens and peers. Drag cards. Apply to save."
+                       Foreground="{StaticResource TextDim}"
+                       FontSize="12"/>
+          </StackPanel>
+
+          <StackPanel DockPanel.Dock="Right"
+                      Orientation="Horizontal"
+                      Spacing="8">
+            <Button Classes="layoutBtn"
+                    Content="Revert"
+                    Command="{Binding RevertCommand}"
+                    IsEnabled="{Binding IsDirty}"
+                    Width="100"/>
+
+            <Button Classes="layoutBtn primaryBtn"
+                    Content="Apply"
+                    Command="{Binding ApplyCommand}"
+                    IsEnabled="{Binding IsDirty}"
+                    Width="100"/>
+          </StackPanel>
+
+        </DockPanel>
+      </Border>
+
+      <!-- Workspace -->
+      <Border Grid.Row="1"
+              Background="{StaticResource Card}"
+              BorderBrush="{StaticResource Stroke}"
+              BorderThickness="1"
+              CornerRadius="12"
+              Padding="12">
+
+        <Border Background="#0B0D11"
+                BorderBrush="{StaticResource StrokeSoft}"
                 BorderThickness="1"
-                CornerRadius="8"
-                Padding="8">
+                CornerRadius="12"
+                Padding="10">
 
-          <Border Width="{Binding CanvasWidth}"
-                  Height="{Binding CanvasHeight}"
-                  HorizontalAlignment="Left"
-                  VerticalAlignment="Top"
-                  Background="Transparent">
+          <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Auto">
 
-            <ItemsControl ItemsSource="{Binding PeerBlocks}"
-                          Width="{Binding CanvasWidth}"
-                          Height="{Binding CanvasHeight}">
+            <Canvas Width="{Binding WorkspaceWidth}"
+                    Height="{Binding WorkspaceHeight}">
 
-              <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                  <Canvas Width="{Binding CanvasWidth}"
-                          Height="{Binding CanvasHeight}" />
-                </ItemsPanelTemplate>
-              </ItemsControl.ItemsPanel>
+              <ItemsControl ItemsSource="{Binding PeerBlocks}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <Canvas/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
 
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <!-- One peer "desktop bounds" rectangle -->
-                  <Border Width="{Binding Nw}"
-                          Height="{Binding Nh}"
-                          Background="#202020"
-                          BorderBrush="#777"
-                          BorderThickness="1"
-                          CornerRadius="8"
-                          PointerPressed="PeerPointerPressed"
-                          PointerMoved="PeerPointerMoved"
-                          PointerReleased="PeerPointerReleased">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
 
-                    <Border.RenderTransform>
-                      <TranslateTransform X="{Binding Nx}"
-                                          Y="{Binding Ny}" />
-                    </Border.RenderTransform>
+                    <Border Classes="peerCard"
+                            Canvas.Left="{Binding Nx}"
+                            Canvas.Top="{Binding Ny}"
+                            PointerPressed="PeerPointerPressed"
+                            PointerMoved="PeerPointerMoved"
+                            PointerReleased="PeerPointerReleased">
 
-                    <TextBlock Text="{Binding PeerName}"
-                               Foreground="White"
-                               FontSize="14"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
+                      <StackPanel Spacing="10">
 
-            </ItemsControl>
-          </Border>
+                        <DockPanel>
+                          <StackPanel DockPanel.Dock="Left" Spacing="2">
+                            <TextBlock Text="{Binding PeerName}"
+                                       Foreground="{StaticResource Text}"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding PeerId}"
+                                       Foreground="{StaticResource TextDim}"
+                                       FontSize="10"/>
+                          </StackPanel>
+
+                          <Button DockPanel.Dock="Right"
+                                  Classes="layoutBtn"
+                                  Content="Identify"
+                                  Width="90"/>
+                        </DockPanel>
+
+                        <!-- If PeerBlockVm doesn't have Normalized yet, remove this whole section -->
+                        <Border Background="#0A0C10"
+                                BorderBrush="{StaticResource StrokeSoft}"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="8">
+
+                          <Canvas Width="{Binding Normalized.TotalWidth}"
+                                  Height="{Binding Normalized.TotalHeight}">
+
+                            <ItemsControl ItemsSource="{Binding Normalized.Displays}">
+                              <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                  <Canvas/>
+                                </ItemsPanelTemplate>
+                              </ItemsControl.ItemsPanel>
+
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                  <Border Classes="monitorTile"
+                                          Width="{Binding Nw}"
+                                          Height="{Binding Nh}"
+                                          Canvas.Left="{Binding Nx}"
+                                          Canvas.Top="{Binding Ny}">
+                                    <Grid>
+                                      <TextBlock Text="{Binding Source.DisplayNumber}"
+                                                 Foreground="White"
+                                                 FontSize="20"
+                                                 FontWeight="Bold"
+                                                 HorizontalAlignment="Center"
+                                                 VerticalAlignment="Center"/>
+                                    </Grid>
+                                  </Border>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                          </Canvas>
+                        </Border>
+
+                      </StackPanel>
+                    </Border>
+
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+            </Canvas>
+          </ScrollViewer>
+
         </Border>
+      </Border>
 
-      </StackPanel>
-    </Border>
+    </Grid>
   </Border>
 </UserControl>

@@ -12,7 +12,7 @@ namespace NexusFlow.UI.ViewModels;
 
 /// <summary>
 /// Layout editor that renders ALL peers known to the runtime layout state.
-/// For now peers are drawn as 1 rectangle each (desktop bounds).
+/// Peers are drawn as 1 rectangle each (desktop bounds).
 /// Offsets are editable (Draft) and persisted to ILayoutStore.
 /// </summary>
 public partial class LayoutEditorViewModel : ObservableObject, IDisposable
@@ -27,7 +27,16 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	public double CanvasHeight { get; } = 400;
 
 	// Draft/applied offsets per peerId (stored in LayoutStore)
+	// ax/ay = applied, dx/dy = draft
 	private readonly Dictionary<string, (double ax, double ay, double dx, double dy)> _offsets = new();
+
+	// Last snapshot peer rects (virtual desktop px)
+	private readonly Dictionary<string, PeerRect> _peerRects = new();
+
+	// Last normalization parameters (so Drag can convert canvas <-> virtual precisely)
+	private double _lastMinX, _lastMinY;
+	private double _lastScale = 1.0;
+	private double _lastBaseX, _lastBaseY;
 
 	[ObservableProperty] private bool isDirty;
 
@@ -36,6 +45,37 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	private string? _dragPeerId;
 	private double _dragStartMouseX, _dragStartMouseY;
 	private double _dragStartDraftX, _dragStartDraftY;
+
+	// ---- Non-overlap tuning (canvas-space) ----
+	private const double PeerPadding = 10;        // minimum gap between peer blocks
+	private const int ResolveMaxIterations = 10;  // keep small + stable
+
+	private readonly struct RectD
+	{
+		public readonly double X, Y, W, H;
+		public double Left => X;
+		public double Top => Y;
+		public double Right => X + W;
+		public double Bottom => Y + H;
+
+		public RectD(double x, double y, double w, double h)
+		{
+			X = x; Y = y; W = w; H = h;
+		}
+	}
+
+	private static bool Intersects(in RectD a, in RectD b)
+		=> a.Left < b.Right &&
+		   a.Right > b.Left &&
+		   a.Top < b.Bottom &&
+		   a.Bottom > b.Top;
+
+	private static (double ox, double oy) Overlap(in RectD a, in RectD b)
+	{
+		var ox = Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left);
+		var oy = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Top, b.Top);
+		return (ox, oy);
+	}
 
 	public LayoutEditorViewModel(ILayoutState layout, ILayoutStore layoutStore)
 	{
@@ -104,6 +144,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	private void RefreshFromSnapshot(LayoutSnapshot? snap)
 	{
 		PeerBlocks.Clear();
+		_peerRects.Clear();
 
 		var peers = snap?.Peers?.ToList() ?? new List<PeerRect>();
 		if (peers.Count == 0)
@@ -112,15 +153,18 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 			return;
 		}
 
+		foreach (var p in peers)
+			_peerRects[p.PeerId] = p;
+
 		// Ensure offset entries exist for all peers
 		foreach (var p in peers)
 			_ = GetOrCreateOffsets(p.PeerId);
 
-		// Build global bounds (real pixels + applied offsets) so all peers fit proportionally
+		// Build global bounds (virtual px + draft offsets) so all peers fit proportionally
 		var bounds = peers.Select(p =>
 		{
 			var off = GetOrCreateOffsets(p.PeerId);
-			var ox = off.dx; // use draft for preview
+			var ox = off.dx;
 			var oy = off.dy;
 
 			var x1 = p.X + ox;
@@ -153,18 +197,32 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 		var baseX = (CanvasWidth - normW) / 2.0;
 		var baseY = (CanvasHeight - normH) / 2.0;
 
+		// Persist normalization params for drag conversion
+		_lastMinX = minX;
+		_lastMinY = minY;
+		_lastScale = scale;
+		_lastBaseX = baseX;
+		_lastBaseY = baseY;
+
 		foreach (var p in peers.OrderBy(p => p.PeerId))
 		{
 			var off = GetOrCreateOffsets(p.PeerId);
+
 			var x = (p.X + off.dx) - minX;
 			var y = (p.Y + off.dy) - minY;
 
+			var nx = baseX + x * scale;
+			var ny = baseY + y * scale;
+			var nw = Math.Max(18, p.Width * scale);
+			var nh = Math.Max(18, p.Height * scale);
+
 			PeerBlocks.Add(new PeerBlockVm(
 				peerId: p.PeerId,
-				nx: baseX + x * scale,
-				ny: baseY + y * scale,
-				nw: Math.Max(18, p.Width * scale),
-				nh: Math.Max(18, p.Height * scale)
+				peerName: p.PeerId, // placeholder until you add names in LayoutSnapshot
+				nx: nx,
+				ny: ny,
+				nw: nw,
+				nh: nh
 			));
 		}
 
@@ -190,14 +248,36 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 		if (!IsDragging || string.IsNullOrWhiteSpace(_dragPeerId))
 			return;
 
-		// Drag works in canvas pixels; offsets are in "real pixel space".
-		// We don't have the exact inverse scale here (because scale depends on all peers),
-		// so we use a simple approximation: treat draft offsets as canvas-space offsets.
-		// This is enough to unblock UI; later we can store offsets in virtual px precisely.
-		var dx = mouseX - _dragStartMouseX;
-		var dy = mouseY - _dragStartMouseY;
+		if (!_peerRects.TryGetValue(_dragPeerId, out var peerRect))
+			return;
 
-		SetDraft(_dragPeerId, _dragStartDraftX + dx, _dragStartDraftY + dy);
+		// Convert canvas delta -> virtual delta using the last computed scale.
+		// (This fixes the "drag feels wrong" issue and keeps offsets in real pixels.)
+		var dxCanvas = mouseX - _dragStartMouseX;
+		var dyCanvas = mouseY - _dragStartMouseY;
+
+		var s = Math.Max(0.0001, _lastScale);
+		var dxVirtual = dxCanvas / s;
+		var dyVirtual = dyCanvas / s;
+
+		var proposedDraftX = _dragStartDraftX + dxVirtual;
+		var proposedDraftY = _dragStartDraftY + dyVirtual;
+
+		// Compute proposed canvas position for this peer (top-left)
+		var proposedNx = VirtualToCanvasX(peerRect.X + proposedDraftX);
+		var proposedNy = VirtualToCanvasY(peerRect.Y + proposedDraftY);
+
+		// Non-overlap resolution in canvas-space (stable + matches what user sees)
+		(var resolvedNx, var resolvedNy) = ResolveNoOverlapCanvas(_dragPeerId, proposedNx, proposedNy);
+
+		// Convert resolved canvas pos back to virtual draft offsets
+		var resolvedVirtualX = CanvasToVirtualX(resolvedNx);
+		var resolvedVirtualY = CanvasToVirtualY(resolvedNy);
+
+		var finalDraftX = resolvedVirtualX - peerRect.X;
+		var finalDraftY = resolvedVirtualY - peerRect.Y;
+
+		SetDraft(_dragPeerId, finalDraftX, finalDraftY);
 
 		// Re-render with new draft offsets
 		RefreshFromSnapshot(_layout.Current);
@@ -207,6 +287,68 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	{
 		IsDragging = false;
 		_dragPeerId = null;
+	}
+
+	private double VirtualToCanvasX(double virtualX)
+		=> _lastBaseX + (virtualX - _lastMinX) * _lastScale;
+
+	private double VirtualToCanvasY(double virtualY)
+		=> _lastBaseY + (virtualY - _lastMinY) * _lastScale;
+
+	private double CanvasToVirtualX(double canvasX)
+		=> ((canvasX - _lastBaseX) / Math.Max(0.0001, _lastScale)) + _lastMinX;
+
+	private double CanvasToVirtualY(double canvasY)
+		=> ((canvasY - _lastBaseY) / Math.Max(0.0001, _lastScale)) + _lastMinY;
+
+	private (double x, double y) ResolveNoOverlapCanvas(string movingPeerId, double proposedNx, double proposedNy)
+	{
+		// Find moving block size (from current rendered blocks)
+		var movingVm = PeerBlocks.FirstOrDefault(p => p.PeerId == movingPeerId);
+		if (movingVm is null)
+			return (proposedNx, proposedNy);
+
+		var x = proposedNx;
+		var y = proposedNy;
+
+		for (int iter = 0; iter < ResolveMaxIterations; iter++)
+		{
+			var me = new RectD(x, y, movingVm.Nw, movingVm.Nh);
+			bool adjusted = false;
+
+			foreach (var other in PeerBlocks)
+			{
+				if (other.PeerId == movingPeerId) continue;
+
+				// Inflate other by padding to keep a gap
+				var otherRect = new RectD(
+					other.Nx - PeerPadding,
+					other.Ny - PeerPadding,
+					other.Nw + PeerPadding * 2,
+					other.Nh + PeerPadding * 2);
+
+				if (!Intersects(me, otherRect))
+					continue;
+
+				var (ox, oy) = Overlap(me, otherRect);
+				if (ox <= 0 || oy <= 0)
+					continue;
+
+				// Push out along smaller overlap axis
+				if (ox < oy)
+					x += me.Left < otherRect.Left ? -ox : ox;
+				else
+					y += me.Top < otherRect.Top ? -oy : oy;
+
+				adjusted = true;
+				break; // re-evaluate after first collision resolution
+			}
+
+			if (!adjusted)
+				break;
+		}
+
+		return (x, y);
 	}
 
 	// ---------------- Commands ----------------
@@ -260,9 +402,11 @@ public sealed partial class PeerBlockVm : ObservableObject
 	[ObservableProperty] private double nw;
 	[ObservableProperty] private double nh;
 
-	public PeerBlockVm(string peerId, double nx, double ny, double nw, double nh)
+	public PeerBlockVm(string peerId, string peerName, double nx, double ny, double nw, double nh)
 	{
 		PeerId = peerId;
+		PeerName = peerName;
+
 		Nx = nx; Ny = ny; Nw = nw; Nh = nh;
 	}
 }
