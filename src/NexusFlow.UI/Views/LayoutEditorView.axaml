@@ -2,10 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="NexusFlow.UI.Views.LayoutEditorView">
 
-  <!-- App background -->
   <Border Background="#111" Padding="16">
-
-    <!-- Card -->
     <Border Background="#1E1E1E"
             BorderBrush="#444"
             BorderThickness="1"
@@ -14,7 +11,7 @@
 
       <StackPanel Spacing="12">
 
-        <!-- Top command bar (Windows-style: explicit Apply/Revert) -->
+        <!-- Command bar -->
         <StackPanel Orientation="Horizontal" Spacing="8">
           <Button Content="Revert"
                   Command="{Binding RevertCommand}"
@@ -27,7 +24,7 @@
                   Width="90"/>
         </StackPanel>
 
-        <!-- Peer block (DRAG SURFACE) -->
+        <!-- Drag surface -->
         <Border x:Name="PeerDragSurface"
                 Background="#202020"
                 BorderBrush="#555"
@@ -37,19 +34,17 @@
 
           <DockPanel LastChildFill="True">
 
-            <!-- Header -->
             <TextBlock DockPanel.Dock="Top"
                        Foreground="White"
                        FontSize="18"
                        Text="{Binding LocalCluster.PeerName}" />
 
-            <!-- Identify button -->
             <Button DockPanel.Dock="Bottom"
                     HorizontalAlignment="Right"
                     Width="90"
                     Content="Identify" />
 
-            <!-- Display cluster area -->
+            <!-- Layout canvas -->
             <Border Margin="0,10,0,10"
                     Background="#0B0B0B"
                     BorderBrush="#333"
@@ -57,7 +52,7 @@
                     CornerRadius="8"
                     Padding="8">
 
-              <!-- RIGID CLUSTER HOST (THIS MOVES: bound to DRAFT offsets) -->
+              <!-- THIS moves (draft offsets) -->
               <Border x:Name="PeerClusterHost"
                       Background="Transparent">
                 <Border.RenderTransform>
@@ -65,27 +60,26 @@
                                       Y="{Binding DraftOffsetY}"/>
                 </Border.RenderTransform>
 
-                <!-- Fixed viewport so ItemsPresenter never collapses -->
-                <Border Width="900"
-                        Height="400"
+                <!-- Viewport -->
+                <Border Width="{Binding CanvasWidth}"
+                        Height="{Binding CanvasHeight}"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Top"
                         Background="Transparent">
 
-                  <ItemsControl Width="900"
-                                Height="400"
+                  <ItemsControl Width="{Binding CanvasWidth}"
+                                Height="{Binding CanvasHeight}"
                                 ItemsSource="{Binding Normalized.Displays}"
                                 HorizontalAlignment="Stretch"
                                 VerticalAlignment="Stretch">
 
-                    <!-- Canvas is the layout panel -->
                     <ItemsControl.ItemsPanel>
                       <ItemsPanelTemplate>
-                        <Canvas Width="900" Height="400"/>
+                        <Canvas Width="{Binding CanvasWidth}"
+                                Height="{Binding CanvasHeight}"/>
                       </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
 
-                    <!-- Monitor rectangles -->
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
                         <Border Width="{Binding Nw}"
@@ -94,8 +88,6 @@
                                 BorderBrush="White"
                                 BorderThickness="1"
                                 CornerRadius="6">
-
-                          <!-- Position via transform (robust at runtime) -->
                           <Border.RenderTransform>
                             <TranslateTransform X="{Binding Nx}"
                                                 Y="{Binding Ny}" />

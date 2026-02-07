@@ -11,7 +11,10 @@ public partial class LayoutEditorViewModel : ObservableObject
 {
 	private readonly DisplayService _displayService;
 
-	
+
+	[ObservableProperty] private double scale;
+	[ObservableProperty] private double panX;
+	[ObservableProperty] private double panY;
 
 	public PeerDisplayCluster LocalCluster { get; }
 	public NormalizedCluster Normalized { get; }
@@ -37,16 +40,18 @@ public partial class LayoutEditorViewModel : ObservableObject
 	private double _clusterMinX, _clusterMinY, _clusterMaxX, _clusterMaxY;
 	private const double SnapThreshold = 12;
 	private const double SnapMargin = 8;
-	partial void OnDraftOffsetXChanged(double value) => RefreshDirtyState();
-	partial void OnDraftOffsetYChanged(double value) => RefreshDirtyState();
+	partial void OnDraftOffsetXChanged(double value) { RefreshDirtyState(); RecomputeTransform(); }
+	partial void OnDraftOffsetYChanged(double value) { RefreshDirtyState(); RecomputeTransform(); }
 	partial void OnAppliedOffsetXChanged(double value) => RefreshDirtyState();
 	partial void OnAppliedOffsetYChanged(double value) => RefreshDirtyState();
 	private readonly ILayoutStore _layoutStore;
 	private readonly LayoutState _layoutState;
 	private readonly string _peerId;
+	private readonly NexusFlow.Core.Layout.IRuntimeLayoutState _runtimeLayout;
+
 	#region Constructor
 
-	public LayoutEditorViewModel(DisplayService displayService, ILayoutStore layoutStore)
+	public LayoutEditorViewModel(DisplayService displayService, ILayoutStore layoutStore, NexusFlow.Core.Layout.IRuntimeLayoutState runtimeLayout)
 	{
 		_displayService = displayService;
 		_layoutStore = layoutStore;
@@ -54,11 +59,13 @@ public partial class LayoutEditorViewModel : ObservableObject
 		LocalCluster = _displayService.GetLocalCluster();
 		_peerId = LocalCluster.PeerId;
 
+		_runtimeLayout = runtimeLayout;
+
 		CanvasWidth = 900;
 		CanvasHeight = 400;
 		Normalized = DisplayLayoutNormalizer.Normalize(LocalCluster, CanvasWidth, CanvasHeight);
 
-		UpdateClusterBounds();
+		UpdateClusterBoundsLocalPixels();
 
 		// Load persisted state
 		_layoutState = _layoutStore.Load();
@@ -81,6 +88,21 @@ public partial class LayoutEditorViewModel : ObservableObject
 		RefreshDirtyState();
 	}
 	#endregion
+	private void PublishRuntimeLayout()
+	{
+		// Local peer rect in CANVAS coordinates after applied offsets
+		var x = _clusterMinX + AppliedOffsetX;
+		var y = _clusterMinY + AppliedOffsetY;
+		var w = _clusterMaxX - _clusterMinX;
+		var h = _clusterMaxY - _clusterMinY;
+
+		var snap = new NexusFlow.Core.Layout.LayoutSnapshot(new[]
+		{
+		new NexusFlow.Core.Layout.PeerRect(_peerId, x, y, w, h)
+	});
+
+		_runtimeLayout.Set(snap);
+	}
 
 	private void RefreshDirtyState()
 	{
@@ -91,26 +113,58 @@ public partial class LayoutEditorViewModel : ObservableObject
 		RevertCommand.NotifyCanExecuteChanged();
 	}
 
-	private void UpdateClusterBounds()
+	private void UpdateClusterBoundsLocalPixels()
 	{
-		if (Normalized.Displays.Count == 0)
+		if (LocalCluster.Displays.Count == 0)
 		{
 			_clusterMinX = _clusterMinY = _clusterMaxX = _clusterMaxY = 0;
 			return;
 		}
 
-		_clusterMinX = Normalized.Displays.Min(d => d.Nx);
-		_clusterMinY = Normalized.Displays.Min(d => d.Ny);
-		_clusterMaxX = Normalized.Displays.Max(d => d.Nx + d.Nw);
-		_clusterMaxY = Normalized.Displays.Max(d => d.Ny + d.Nh);
+		_clusterMinX = LocalCluster.Displays.Min(d => d.X);
+		_clusterMinY = LocalCluster.Displays.Min(d => d.Y);
+		_clusterMaxX = LocalCluster.Displays.Max(d => d.X + d.Width);
+		_clusterMaxY = LocalCluster.Displays.Max(d => d.Y + d.Height);
 	}
+
+	private void RecomputeTransform()
+	{
+		// World bounds of LOCAL peer (for now)
+		var worldMinX = _clusterMinX + DraftOffsetX;
+		var worldMinY = _clusterMinY + DraftOffsetY;
+		var worldMaxX = _clusterMaxX + DraftOffsetX;
+		var worldMaxY = _clusterMaxY + DraftOffsetY;
+
+		var worldW = Math.Max(1.0, worldMaxX - worldMinX);
+		var worldH = Math.Max(1.0, worldMaxY - worldMinY);
+
+		var sx = CanvasWidth / worldW;
+		var sy = CanvasHeight / worldH;
+		var s = Math.Min(sx, sy);
+
+		Scale = s;
+
+		// center it
+		PanX = (CanvasWidth - worldW * s) / 2.0 - worldMinX * s;
+		PanY = (CanvasHeight - worldH * s) / 2.0 - worldMinY * s;
+	}
+
+	private (double cx, double cy) WorldToCanvas(double wx, double wy)
+		=> (wx * Scale + PanX, wy * Scale + PanY);
+
+	private (double wx, double wy) CanvasToWorld(double cx, double cy)
+		=> ((cx - PanX) / Scale, (cy - PanY) / Scale);
+
+
 
 	// ---- Dragging edits DRAFT only ----
 	public void BeginDrag(double mouseX, double mouseY)
 	{
 		IsDragging = true;
+
 		_dragStartMouseX = mouseX;
 		_dragStartMouseY = mouseY;
+
 		_dragStartDraftX = DraftOffsetX;
 		_dragStartDraftY = DraftOffsetY;
 	}
@@ -119,29 +173,21 @@ public partial class LayoutEditorViewModel : ObservableObject
 	{
 		if (!IsDragging) return;
 
-		var proposedX = _dragStartDraftX + (mouseX - _dragStartMouseX);
-		var proposedY = _dragStartDraftY + (mouseY - _dragStartMouseY);
+		// canvas delta -> world delta
+		var dxCanvas = mouseX - _dragStartMouseX;
+		var dyCanvas = mouseY - _dragStartMouseY;
 
-		// Clamp (with margin)
-		var minOffsetX = -_clusterMinX + SnapMargin;
-		var maxOffsetX = CanvasWidth - _clusterMaxX - SnapMargin;
+		var dxWorld = dxCanvas / Math.Max(Scale, 0.00001);
+		var dyWorld = dyCanvas / Math.Max(Scale, 0.00001);
 
-		var minOffsetY = -_clusterMinY + SnapMargin;
-		var maxOffsetY = CanvasHeight - _clusterMaxY - SnapMargin;
+		var proposedX = _dragStartDraftX + dxWorld;
+		var proposedY = _dragStartDraftY + dyWorld;
 
-		if (maxOffsetX < minOffsetX) { minOffsetX = maxOffsetX = 0; }
-		if (maxOffsetY < minOffsetY) { minOffsetY = maxOffsetY = 0; }
-
-		var clampedX = Clamp(proposedX, minOffsetX, maxOffsetX);
-		var clampedY = Clamp(proposedY, minOffsetY, maxOffsetY);
-
-		// Snap-to-edge
-		clampedX = ApplySnapX(clampedX, minOffsetX, maxOffsetX);
-		clampedY = ApplySnapY(clampedY, minOffsetY, maxOffsetY);
-
-		DraftOffsetX = clampedX;
-		DraftOffsetY = clampedY;
+		// Later, when multi-peer: clamp/snap in world. For now keep your logic simple:
+		DraftOffsetX = proposedX;
+		DraftOffsetY = proposedY;
 	}
+
 
 	public void EndDrag() => IsDragging = false;
 
@@ -202,6 +248,8 @@ public partial class LayoutEditorViewModel : ObservableObject
 			.ToList();
 
 		_layoutStore.Save(_layoutState);
+
+		PublishRuntimeLayout();
 	}
 
 
@@ -216,3 +264,22 @@ public partial class LayoutEditorViewModel : ObservableObject
 
 	private bool CanRevert() => IsDirty;
 }
+
+public sealed class PeerBlockVm
+{
+	public string PeerId { get; }
+	public string Name { get; }
+
+	// World pixel offsets (persisted)
+	public double WorldX { get; set; }
+	public double WorldY { get; set; }
+
+	// Rigid cluster bounds in LOCAL peer pixels (computed from displays)
+	public double LocalMinX { get; init; }
+	public double LocalMinY { get; init; }
+	public double LocalMaxX { get; init; }
+	public double LocalMaxY { get; init; }
+
+	public PeerBlockVm(string peerId, string name) { PeerId = peerId; Name = name; }
+}
+

@@ -101,12 +101,16 @@ namespace NexusFlow.App
 					services.AddSingleton<IConnectedPeersSnapshot, ConnectedPeersSnapshot>();
 
 					// ---------- ViewModels ----------
+
+					services.AddSingleton<NexusFlow.Core.Layout.IRuntimeLayoutState, NexusFlow.Core.Layout.RuntimeLayoutState>();
 					services.AddSingleton<LayoutEditorViewModel>(sp =>
 					{
 						var displayService = sp.GetRequiredService<DisplayService>();
 						var store = sp.GetRequiredService<JsonLayoutStore>();
-						return new LayoutEditorViewModel(displayService, store);
+						var runtime = sp.GetRequiredService<NexusFlow.Core.Layout.IRuntimeLayoutState>();
+						return new LayoutEditorViewModel(displayService, store, runtime);
 					});
+
 
 					services.AddSingleton<PeersListViewModel>();        // assumes it resolves its own deps via DI
 					services.AddSingleton<DiagnosticsViewModel>();
@@ -167,6 +171,24 @@ namespace NexusFlow.App
 					services.AddSingleton<NexusFlow.Core.InputTransport.IRemoteInputSink, NexusFlow.Core.InputTransport.DiagnosticsRemoteInputSink>();
 					// ---------- Input Injection (F.7) ----------
 					services.AddSingleton<IInputInjector, WindowsSendInputInjector>();
+					// Core layout runtime
+					services.AddSingleton<NexusFlow.Core.Layout.ILayoutState, NexusFlow.Core.Layout.LayoutState>();
+
+					// Cursor tracker
+					services.AddSingleton<NexusFlow.Input.ICursorTracker, NexusFlow.Input.CursorTracker>();
+
+					// Auto target switching engine
+					services.AddSingleton<NexusFlow.Core.Routing.TargetSwitchingEngine>();
+					services.AddHostedService<NexusFlow.App.Hosted.TargetSwitchingHostedService>();
+					services.AddSingleton<NexusFlow.Input.ICursorTracker, NexusFlow.Input.CursorTracker>();
+
+					services.AddSingleton(sp =>
+					{
+						var display = sp.GetRequiredService<DisplayService>();
+						return display.GetLocalCluster(); // PeerDisplayCluster
+					});
+
+					services.AddSingleton<NexusFlow.Core.Input.TargetSwitchingEngine>();
 
 				});
 
