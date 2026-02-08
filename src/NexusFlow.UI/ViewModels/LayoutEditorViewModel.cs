@@ -7,6 +7,8 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using NexusFlow.Display.Layout;
+using NexusFlow.Display.Models;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -215,18 +217,43 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 			var ny = baseY + y * scale;
 			var nw = Math.Max(18, p.Width * scale);
 			var nh = Math.Max(18, p.Height * scale);
+			var peerName = p.PeerId; // placeholder until LayoutSnapshot includes names
+			var normalized = BuildDesktopNormalized(p.PeerId, peerName, p);
 
 			PeerBlocks.Add(new PeerBlockVm(
 				peerId: p.PeerId,
-				peerName: p.PeerId, // placeholder until you add names in LayoutSnapshot
+				peerName: peerName,
+				normalized: normalized,
 				nx: nx,
 				ny: ny,
 				nw: nw,
 				nh: nh
 			));
+
 		}
 
 		RefreshDirtyState();
+	}
+
+
+	private static NormalizedCluster BuildDesktopNormalized(string peerId, string peerName, PeerRect r)
+	{
+		// Minimal: represent the peer as one big "desktop" display.
+		var snap = new DisplaySnapshot(
+			StableId: "desktop",
+			DisplayNumber: 1,
+			IsPrimary: true,
+			X: r.X,
+			Y: r.Y,
+			Width: r.Width,
+			Height: r.Height,
+			RotationDegrees: 0,
+			DpiX: 96,
+			DpiY: 96
+		);
+
+		var cluster = new PeerDisplayCluster(peerId, peerName, new[] { snap });
+		return DisplayLayoutNormalizer.Normalize(cluster, maxWidth: 240, maxHeight: 130, padding: 8);
 	}
 
 	// ---------------- Drag ----------------
@@ -396,17 +423,17 @@ public sealed partial class PeerBlockVm : ObservableObject
 {
 	public string PeerId { get; }
 	public string PeerName { get; }
-
+	public NormalizedCluster Normalized { get; }
 	[ObservableProperty] private double nx;
 	[ObservableProperty] private double ny;
 	[ObservableProperty] private double nw;
 	[ObservableProperty] private double nh;
 
-	public PeerBlockVm(string peerId, string peerName, double nx, double ny, double nw, double nh)
+	public PeerBlockVm(string peerId, string peerName, NormalizedCluster normalized, double nx, double ny, double nw, double nh)
 	{
 		PeerId = peerId;
 		PeerName = peerName;
-
+		Normalized = normalized;
 		Nx = nx; Ny = ny; Nw = nw; Nh = nh;
 	}
 }
