@@ -28,6 +28,9 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	public double CanvasWidth { get; } = 900;
 	public double CanvasHeight { get; } = 400;
 
+	public double WorkspaceWidth  => CanvasWidth;
+	public double WorkspaceHeight => CanvasHeight;
+
 	// Draft/applied offsets per peerId (stored in LayoutStore)
 	// ax/ay = applied, dx/dy = draft
 	private readonly Dictionary<string, (double ax, double ay, double dx, double dy)> _offsets = new();
@@ -217,7 +220,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 			var ny = baseY + y * scale;
 			var nw = Math.Max(18, p.Width * scale);
 			var nh = Math.Max(18, p.Height * scale);
-			var peerName = p.PeerId; // placeholder until LayoutSnapshot includes names
+			var peerName = string.IsNullOrEmpty(p.DeviceName) ? p.PeerId : p.DeviceName;
 			var normalized = BuildDesktopNormalized(p.PeerId, peerName, p);
 
 			PeerBlocks.Add(new PeerBlockVm(
@@ -243,10 +246,10 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 			StableId: "desktop",
 			DisplayNumber: 1,
 			IsPrimary: true,
-			X: r.X,
-			Y: r.Y,
-			Width: r.Width,
-			Height: r.Height,
+			X: (int)r.X,
+			Y: (int)r.Y,
+			Width: (int)r.Width,
+			Height: (int)r.Height,
 			RotationDegrees: 0,
 			DpiX: 96,
 			DpiY: 96

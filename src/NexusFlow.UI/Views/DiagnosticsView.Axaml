@@ -36,7 +36,7 @@
       <Button Content="Mic Activity" Command="{Binding SimMicActivityCommand}" />
     </WrapPanel>
 
-    <TextBlock Text="Mouse Move (dx, dy) — switches only after threshold" Opacity="0.8"/>
+    <TextBlock Text="Mouse Move (dx, dy) -> switches only after threshold" Opacity="0.8"/>
     <WrapPanel VerticalAlignment="Center">
       <TextBlock Text="dx:" VerticalAlignment="Center"/>
       <TextBox Width="80" Text="{Binding MoveDx, Mode=TwoWay}" />

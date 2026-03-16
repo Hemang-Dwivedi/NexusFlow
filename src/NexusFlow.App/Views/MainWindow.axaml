@@ -16,7 +16,7 @@
   <TabItem Header="Peers">
     <uiViews:PeersListView DataContext="{Binding Peers}" />
   </TabItem>
-  <TabItem>
+  <TabItem Header="Diagnostics">
     <uiViews:DiagnosticsView DataContext="{Binding Diagnostics}" />
   </TabItem>
 </TabControl>

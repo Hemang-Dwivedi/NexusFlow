@@ -1,11 +1,3 @@
-namespace NexusFlow.Tests.Unit
-{
-	public class UnitTest1
-	{
-		[Fact]
-		public void Test1()
-		{
-
-		}
-	}
-}
+// Placeholder — tests are in RoutingEngineTests.cs, FailsafeServiceTests.cs,
+// InputSourceSwitchingSimulatorTests.cs, and TargetSwitchingEngineTests.cs
+namespace NexusFlow.Tests.Unit;

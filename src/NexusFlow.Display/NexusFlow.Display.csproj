@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NexusFlow.Diagnostics\NexusFlow.Diagnostics.csproj" />
+    <ProjectReference Include="..\NexusFlow.Identity\NexusFlow.Identity.csproj" />
     <ProjectReference Include="..\NexusFlow.Protocol\NexusFlow.Protocol.csproj" />
   </ItemGroup>
 

@@ -181,7 +181,6 @@ namespace NexusFlow.App
 					// Auto target switching engine
 					services.AddSingleton<NexusFlow.Core.Routing.TargetSwitchingEngine>();
 					services.AddHostedService<NexusFlow.App.Hosted.TargetSwitchingHostedService>();
-					services.AddSingleton<NexusFlow.Input.ICursorTracker, NexusFlow.Input.CursorTracker>();
 
 					services.AddSingleton(sp =>
 					{
@@ -189,7 +188,6 @@ namespace NexusFlow.App
 						return display.GetLocalCluster(); // PeerDisplayCluster
 					});
 
-					services.AddSingleton<NexusFlow.Core.Input.TargetSwitchingEngine>();
 
 				});
 

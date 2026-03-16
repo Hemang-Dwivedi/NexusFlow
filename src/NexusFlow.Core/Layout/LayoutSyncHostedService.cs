@@ -63,6 +63,7 @@ public sealed class LayoutSyncHostedService : IHostedService
 				var mine = BuildLocalPeerRect();
 				var msg = new PeerRectSyncV1(
 					PeerId: mine.PeerId,
+					DeviceName: mine.DeviceName,
 					MinX: (int)mine.X,
 					MinY: (int)mine.Y,
 					Width: (int)mine.Width,
@@ -96,6 +97,7 @@ public sealed class LayoutSyncHostedService : IHostedService
 
 			_layout.UpsertPeerRect(new PeerRect(
 				PeerId: msg.PeerId,
+				DeviceName: msg.DeviceName,
 				X: msg.MinX,
 				Y: msg.MinY,
 				Width: msg.Width,
@@ -122,6 +124,7 @@ public sealed class LayoutSyncHostedService : IHostedService
 		
 		return new PeerRect(
 			PeerId: cluster.PeerId,
+			DeviceName: cluster.PeerName,
 			X: minX,
 			Y: minY,
 			Width: maxX - minX,
