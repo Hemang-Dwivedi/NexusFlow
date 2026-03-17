@@ -16,8 +16,9 @@ namespace NexusFlow.Input;
 ///   • Delegate returns false → event is NOT captured (nothing raised, nothing
 ///     forwarded) and passed through normally to local applications.
 ///
-/// Mouse moves are always passed through and always raise MouseMove so that
-/// CursorTracker / TargetSwitchingEngine can work regardless of routing state.
+/// Mouse moves always raise MouseMove (CursorTracker / TargetSwitchingEngine need
+/// deltas regardless of routing state), but the OS cursor is frozen locally when
+/// routing to remote — the physical cursor belongs on the remote screen.
 ///
 /// The delegate is read at the moment of every event — no stale flag, no race.
 /// </summary>
@@ -251,7 +252,14 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			if (ms.dwExtraInfo == InjectedEventMarker.Magic)
 				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 
-			// ── Mouse moves: always pass through, always raise for cursor tracking ─
+			// Decide once for this entire event — avoids invoking the delegate twice.
+			var routeToRemote = _shouldRouteToRemote?.Invoke() ?? false;
+
+			// ── Mouse moves ───────────────────────────────────────────────────────
+			// Always raise MouseMove so CursorTracker / TargetSwitchingEngine receive
+			// deltas for boundary detection and remote cursor forwarding.
+			// When routing to remote: return 1 so the local OS cursor freezes in place
+			// (the visible cursor belongs on the remote screen, not moving locally).
 			if (msg == MouseMessage.WM_MOUSEMOVE)
 			{
 				var x = ms.pt.x;
@@ -271,12 +279,12 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 				}
 				_lastX = x; _lastY = y; _hasLast = true;
 
-				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+				return routeToRemote
+					? (IntPtr)1                                              // freeze local cursor
+					: CallNextHookEx(_mouseHook, nCode, wParam, lParam);    // move local cursor
 			}
 
-			// ── Buttons and wheel: decide once per event ─────────────────────────
-			var routeToRemote = _shouldRouteToRemote?.Invoke() ?? false;
-
+			// ── Buttons and wheel ─────────────────────────────────────────────────
 			if (!routeToRemote)
 			{
 				// Local routing — do not capture, pass event to local applications
