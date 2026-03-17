@@ -15,6 +15,8 @@ public interface IWinHookCaptureService
 	event Action<CapturedMouseButtonEvent>? MouseButton;
 	event Action<CapturedMouseWheelEvent>? MouseWheel;
 
+	bool SuppressLocalNonMoveInput { get; set; }
+
 	void Start();
 	void Stop();
 }
@@ -40,6 +42,14 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 	private int _lastX;
 	private int _lastY;
 	private bool _hasLast;
+
+	private volatile bool _suppressLocalNonMoveInput;
+
+	public bool SuppressLocalNonMoveInput
+	{
+		get => _suppressLocalNonMoveInput;
+		set => _suppressLocalNonMoveInput = value;
+	}
 
 	public event Action<CapturedKeyEvent>? Key;
 	public event Action<CapturedMouseMoveEvent>? MouseMove;
@@ -191,7 +201,14 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			// swallow - never break global input
 		}
 
-		return CallNextHookEx(_kbdHook, nCode, wParam, lParam);
+		// Always call next hook first so GlobalHotkeyListener (failsafe) can see the event
+		CallNextHookEx(_kbdHook, nCode, wParam, lParam);
+
+		// Suppress local delivery when routing input to a remote peer
+		if (_suppressLocalNonMoveInput && nCode >= 0)
+			return (IntPtr)1;
+
+		return (IntPtr)0;
 	}
 
 	private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -282,7 +299,19 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			// swallow - never break global input
 		}
 
-		return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+		// Always call next hook first
+		CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
+		// For non-move events, suppress local delivery when routing to remote peer
+		// Mouse moves are always passed through so cursor tracking and boundary detection work
+		if (_suppressLocalNonMoveInput && nCode >= 0)
+		{
+			var msg2 = (MouseMessage)wParam;
+			if (msg2 != MouseMessage.WM_MOUSEMOVE)
+				return (IntPtr)1;
+		}
+
+		return (IntPtr)0;
 	}
 
 	// -------- Win32 interop --------

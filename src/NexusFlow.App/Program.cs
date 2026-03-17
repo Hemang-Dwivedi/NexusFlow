@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NexusFlow.App.Services;
@@ -107,7 +107,9 @@ namespace NexusFlow.App
 					{
 						var layoutState = sp.GetRequiredService<Core.Layout.ILayoutState>();
 						var store = sp.GetRequiredService<JsonLayoutStore>();
-						return new LayoutEditorViewModel(layoutState, store);
+						var routing = sp.GetRequiredService<IRoutingEngine>();
+						var me = sp.GetRequiredService<ILocalIdentity>();
+						return new LayoutEditorViewModel(layoutState, store, routing, me);
 					});
 
 
@@ -181,6 +183,7 @@ namespace NexusFlow.App
 					// Auto target switching engine
 					services.AddSingleton<NexusFlow.Core.Routing.TargetSwitchingEngine>();
 					services.AddHostedService<NexusFlow.App.Hosted.TargetSwitchingHostedService>();
+				services.AddHostedService<NexusFlow.App.Hosted.LocalInputSuppressionHostedService>();
 
 					services.AddSingleton(sp =>
 					{

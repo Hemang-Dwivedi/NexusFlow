@@ -2,6 +2,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using NexusFlow.Core.Layout;
+using NexusFlow.Core.Routing;
+using NexusFlow.Identity;
 using NexusFlow.Settings.Layout;
 using System;
 using System.Collections.Generic;
@@ -21,6 +23,8 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 {
 	private readonly ILayoutState _layout;
 	private readonly ILayoutStore _layoutStore;
+	private readonly IRoutingEngine _routing;
+	private readonly string _localPeerId;
 	private NexusFlow.Settings.Layout.LayoutState _persisted;
 
 	public ObservableCollection<PeerBlockVm> PeerBlocks { get; } = new();
@@ -44,6 +48,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	private double _lastBaseX, _lastBaseY;
 
 	[ObservableProperty] private bool isDirty;
+	[ObservableProperty] private string activeTargetName = "Routing to: Local";
 
 	// drag
 	public bool IsDragging { get; private set; }
@@ -82,15 +87,18 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 		return (ox, oy);
 	}
 
-	public LayoutEditorViewModel(ILayoutState layout, ILayoutStore layoutStore)
+	public LayoutEditorViewModel(ILayoutState layout, ILayoutStore layoutStore, IRoutingEngine routing, ILocalIdentity me)
 	{
 		_layout = layout;
 		_layoutStore = layoutStore;
+		_routing = routing;
+		_localPeerId = me.PeerId;
 
 		_persisted = _layoutStore.Load();
 		LoadOffsetsFromStore();
 
 		_layout.Changed += OnLayoutChanged;
+		_routing.ActiveTargetChanged += OnActiveTargetChanged;
 
 		// initial populate if already present
 		RefreshFromSnapshot(_layout.Current);
@@ -99,11 +107,25 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	public void Dispose()
 	{
 		_layout.Changed -= OnLayoutChanged;
+		_routing.ActiveTargetChanged -= OnActiveTargetChanged;
 	}
 
 	private void OnLayoutChanged(LayoutSnapshot? snap)
 	{
 		Dispatcher.UIThread.Post(() => RefreshFromSnapshot(snap));
+	}
+
+	private void OnActiveTargetChanged(object? sender, string peerId)
+	{
+		Dispatcher.UIThread.Post(() =>
+		{
+			foreach (var b in PeerBlocks)
+				b.IsActiveTarget = b.PeerId == peerId;
+
+			var name = PeerBlocks.FirstOrDefault(b => b.PeerId == peerId)?.PeerName
+				?? (peerId == _localPeerId ? "Local" : peerId[..Math.Min(8, peerId.Length)]);
+			ActiveTargetName = $"Routing to: {name}";
+		});
 	}
 
 	private void LoadOffsetsFromStore()
@@ -234,6 +256,12 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 			));
 
 		}
+
+		// Set initial active target state
+		foreach (var b in PeerBlocks)
+			b.IsActiveTarget = b.PeerId == _routing.ActiveTargetPeerId;
+		var activeName = PeerBlocks.FirstOrDefault(b => b.IsActiveTarget)?.PeerName ?? "Local";
+		ActiveTargetName = $"Routing to: {activeName}";
 
 		RefreshDirtyState();
 	}
@@ -431,6 +459,7 @@ public sealed partial class PeerBlockVm : ObservableObject
 	[ObservableProperty] private double ny;
 	[ObservableProperty] private double nw;
 	[ObservableProperty] private double nh;
+	[ObservableProperty] private bool isActiveTarget;
 
 	public PeerBlockVm(string peerId, string peerName, NormalizedCluster normalized, double nx, double ny, double nw, double nh)
 	{

@@ -51,6 +51,12 @@
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="8"/>
     </Style>
+
+    <Style Selector="Border.peerCard.activeTarget">
+      <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="BoxShadow" Value="0 0 12 2 #3B82F6"/>
+    </Style>
   </UserControl.Styles>
 
   <Border Background="{StaticResource Bg}" Padding="16">
@@ -77,6 +83,24 @@
                        Foreground="{StaticResource TextDim}"
                        FontSize="12"/>
           </StackPanel>
+
+          <!-- Routing state pill (center of header) -->
+          <Border DockPanel.Dock="Right"
+                  Margin="0,0,8,0"
+                  Background="#1E3A5F"
+                  BorderBrush="{StaticResource Accent}"
+                  BorderThickness="1"
+                  CornerRadius="20"
+                  Padding="12,4">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Ellipse Width="8" Height="8" Fill="#3B82F6"/>
+              <TextBlock Text="{Binding ActiveTargetName}"
+                         Foreground="{StaticResource Accent}"
+                         FontSize="12"
+                         FontWeight="Medium"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </Border>
 
           <StackPanel DockPanel.Dock="Right"
                       Orientation="Horizontal"
@@ -128,6 +152,7 @@
                   <DataTemplate>
 
                     <Border Classes="peerCard"
+                            Classes.activeTarget="{Binding IsActiveTarget}"
                             Canvas.Left="{Binding Nx}"
                             Canvas.Top="{Binding Ny}"
                             PointerPressed="PeerPointerPressed"
@@ -145,6 +170,15 @@
                             <TextBlock Text="{Binding PeerId}"
                                        Foreground="{StaticResource TextDim}"
                                        FontSize="10"/>
+                            <Border Background="{StaticResource Accent}"
+                                    CornerRadius="4"
+                                    Padding="6,1"
+                                    IsVisible="{Binding IsActiveTarget}">
+                              <TextBlock Text="ACTIVE"
+                                         Foreground="White"
+                                         FontSize="9"
+                                         FontWeight="Bold"/>
+                            </Border>
                           </StackPanel>
 
                           <Button DockPanel.Dock="Right"
