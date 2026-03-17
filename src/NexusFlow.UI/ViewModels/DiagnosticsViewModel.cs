@@ -9,8 +9,6 @@ using System.Threading.Tasks;
 using NexusFlow.Core.Input;
 using NexusFlow.UI.Services;
 using NexusFlow.Core.Control;
-using NexusFlow.Input;
-
 namespace NexusFlow.UI.ViewModels;
 
 public sealed partial class DiagnosticsViewModel : ObservableObject
@@ -19,15 +17,13 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	private readonly IDiagnosticsLog _log;
 	private readonly IFailsafeService _failsafe;
 	private readonly IInputSourceSwitchingSimulator _inputSim;
-	private readonly IWinHookCaptureService _hook;
 
 	public DiagnosticsViewModel(
 	IRoutingEngine routing,
 	IConnectedPeersSnapshot peers,
 	IDiagnosticsLog log,
 	IFailsafeService failsafe,
-	IInputSourceSwitchingSimulator inputSim,
-	IWinHookCaptureService hook)
+	IInputSourceSwitchingSimulator inputSim)
 
 	{
 		_routing = routing;
@@ -35,7 +31,6 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_log = log;
 		_failsafe = failsafe;
 		_inputSim = inputSim;
-		_hook = hook;
 		InputThresholdInfo = _inputSim.MovementThresholdInfo;
 
 		SelectedSimPeerItem = FindByPeerId(Peers.LocalPeerId);
@@ -49,9 +44,7 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_routing.ActiveTargetChanged += (_, id) =>
 		{
 			ActiveTargetPeerId = id;
-			// Refresh suppression state a tick after routing fires (BlockInput is synchronous,
-			// but the hook flag is set synchronously too — just let the UI catch up).
-			Dispatcher.UIThread.Post(() => IsLocalInputSuppressed = _hook.SuppressLocalNonMoveInput);
+			Dispatcher.UIThread.Post(RefreshSuppressionState);
 		};
 		_routing.ActiveSourceChanged += (_, id) => ActiveSourcePeerId = id;
 
@@ -59,7 +52,7 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_failsafe.Changed += b => Dispatcher.UIThread.Post(() =>
 		{
 			IsFailsafeBlocked = b;
-			IsLocalInputSuppressed = _hook.SuppressLocalNonMoveInput;
+			RefreshSuppressionState();
 		});
 
 		// seed logs
@@ -145,6 +138,11 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 
 	[RelayCommand]
 	private void ToggleFailsafe() => _failsafe.Toggle();
+
+	// Suppression is active when routing target is a remote peer and failsafe is off.
+	// The hook reads this same logic live at every event via ShouldRouteToRemote.
+	private void RefreshSuppressionState()
+		=> IsLocalInputSuppressed = _routing.ActiveTargetPeerId != Peers.LocalPeerId && !_failsafe.IsBlocked;
 
 	private (string PeerId, string DisplayName)? FindByPeerId(string peerId)
 	{
