@@ -5,6 +5,20 @@
        For more details visit https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests -->
   <assemblyIdentity version="1.0.0.0" name="NexusFlow.App.Desktop"/>
 
+  <!--
+    NexusFlow requires administrator privileges because it uses:
+      • WH_MOUSE_LL / WH_KEYBOARD_LL hooks that must suppress input to elevated processes
+      • BlockInput() Win32 API (always fails from non-elevated processes)
+    Without elevation both mechanisms are silently bypassed by UIPI.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <!-- A list of the Windows versions that this application has been tested on
