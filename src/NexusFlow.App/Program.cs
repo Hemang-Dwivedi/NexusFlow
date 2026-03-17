@@ -90,6 +90,7 @@ namespace NexusFlow.App
 					// ---------- Control Channel (ConnectionManager) ----------
 					// NOTE: ConnectionManager ctor = (ILocalIdentity me, TrustStore trustStore)
 					services.AddSingleton<ConnectionManager>();
+					services.AddSingleton<IControlBroadcaster>(sp => sp.GetRequiredService<ConnectionManager>());
 
 
 					services.AddHostedService<RoutingWireupHostedService>();
@@ -111,7 +112,8 @@ namespace NexusFlow.App
 						var routing = sp.GetRequiredService<IRoutingEngine>();
 						var me = sp.GetRequiredService<ILocalIdentity>();
 						var displayService = sp.GetRequiredService<DisplayService>();
-						return new LayoutEditorViewModel(layoutState, store, routing, me, displayService);
+						var broadcaster = sp.GetRequiredService<IControlBroadcaster>();
+						return new LayoutEditorViewModel(layoutState, store, routing, me, displayService, broadcaster);
 					});
 
 

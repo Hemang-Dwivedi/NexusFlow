@@ -19,7 +19,14 @@
       "Bash(powershell -Command \"Get-ChildItem -Recurse -Filter ''*.axaml'' ''C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src'' | Select-Object -ExpandProperty FullName\")",
       "Bash(powershell -Command \"Get-Content -Raw ''C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src\\\\NexusFlow.Core\\\\Layout\\\\LayoutSyncHostedService.cs'' | Select-String -Pattern ''UpsertPeerRect'' -AllMatches\")",
       "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src\\\\NexusFlow.App\\\\Program.cs'' | Select-Object -Index \\(105..113\\) | ForEach-Object { [int][char]$_0], $_}\")",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(where py:*)",
+      "Bash(dotnet --version)",
+      "Bash(powershell.exe -Command \"$path = ''C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/src/NexusFlow.App/Program.cs''; $text = [System.IO.File]::ReadAllText\\($path\\); $idx = $text.IndexOf\\(''AddSingleton<ConnectionManager>''\\); $text.Substring\\($idx, 200\\) | Format-Hex\")",
+      "Bash(powershell.exe -NoProfile -Command \"[System.IO.File]::ReadAllText\\(''C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/src/NexusFlow.App/Program.cs''\\).Substring\\(3300, 300\\) | Write-Host\")",
+      "Bash(powershell.exe -NoProfile -Command \"[System.IO.File]::ReadAllText\\(''C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/src/NexusFlow.App/Program.cs''\\).Substring\\(2700, 400\\) | Write-Host\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/fix_program.ps1\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/fix_program2.ps1\")"
     ]
   }
 }

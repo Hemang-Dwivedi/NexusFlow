@@ -42,11 +42,10 @@
       <Setter Property="CornerRadius"    Value="6"/>
       <Setter Property="Cursor"          Value="SizeAll"/>
     </Style>
-    <!-- Local tiles: blue tint, not draggable -->
+    <!-- Local tiles: blue tint, draggable like remote tiles -->
     <Style Selector="Border.displayTile.localTile">
       <Setter Property="Background"  Value="#0D1E3A"/>
       <Setter Property="BorderBrush" Value="#1A4070"/>
-      <Setter Property="Cursor"      Value="Arrow"/>
     </Style>
     <!-- Active routing target highlight -->
     <Style Selector="Border.displayTile.activeTarget">
@@ -70,7 +69,7 @@
             <TextBlock Text="Display Layout"
                        Foreground="{StaticResource Text}"
                        FontSize="18" FontWeight="SemiBold"/>
-            <TextBlock Text="Drag remote displays to set boundaries. Apply to save."
+            <TextBlock Text="Drag any tile to arrange your layout. Tiles snap together. Apply to save and sync."
                        Foreground="{StaticResource TextDim}" FontSize="12"/>
           </StackPanel>
 

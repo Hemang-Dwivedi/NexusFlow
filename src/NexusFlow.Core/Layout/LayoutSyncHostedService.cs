@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using NexusFlow.Core.Control;
 using NexusFlow.Core.Services;
+using NexusFlow.Identity;
 using NexusFlow.Protocol.Control;
 using NexusFlow.Settings.Layout;
 using System;
@@ -24,17 +25,20 @@ public sealed class LayoutSyncHostedService : IHostedService
 	private readonly DisplayService _displayService;
 	private readonly ILayoutState _layout;
 	private readonly ILayoutStore _layoutStore;
+	private readonly ILocalIdentity _localIdentity;
 
 	public LayoutSyncHostedService(
 		ConnectionManager connections,
 		DisplayService displayService,
 		ILayoutState layout,
-		ILayoutStore layoutStore)
+		ILayoutStore layoutStore,
+		ILocalIdentity localIdentity)
 	{
 		_connections = connections;
 		_displayService = displayService;
 		_layout = layout;
 		_layoutStore = layoutStore;
+		_localIdentity = localIdentity;
 	}
 
 	public Task StartAsync(CancellationToken cancellationToken)
@@ -94,27 +98,59 @@ public sealed class LayoutSyncHostedService : IHostedService
 		try
 		{
 			var type = ControlCodec.PeekType(payload);
-			if (type != nameof(PeerRectSyncV1))
-				return;
 
-			var msg = ControlCodec.Decode<PeerRectSyncV1>(payload)!;
-
-			var raw = new PeerRect(
-				PeerId: msg.PeerId,
-				DeviceName: msg.DeviceName,
-				X: msg.MinX,
-				Y: msg.MinY,
-				Width: msg.Width,
-				Height: msg.Height
-			);
-			var saved = _layoutStore.Load();
-			if (saved.Peers.TryGetValue(msg.PeerId, out var peerState) && peerState.HasSavedPosition)
+			if (type == nameof(PeerRectSyncV1))
 			{
-				_layout.UpsertPeerRect(raw with { X = peerState.AppliedOffsetX, Y = peerState.AppliedOffsetY });
+				var msg = ControlCodec.Decode<PeerRectSyncV1>(payload)!;
+				var raw = new PeerRect(
+					PeerId: msg.PeerId,
+					DeviceName: msg.DeviceName,
+					X: msg.MinX,
+					Y: msg.MinY,
+					Width: msg.Width,
+					Height: msg.Height
+				);
+				var saved = _layoutStore.Load();
+				if (saved.Peers.TryGetValue(msg.PeerId, out var peerState) && peerState.HasSavedPosition)
+					_layout.UpsertPeerRect(raw with { X = peerState.AppliedOffsetX, Y = peerState.AppliedOffsetY });
+				else
+					_layout.UpsertPeerRect(raw);
 			}
-			else
+			else if (type == nameof(LayoutPositionSyncV1))
 			{
-				_layout.UpsertPeerRect(raw);
+				var msg = ControlCodec.Decode<LayoutPositionSyncV1>(payload)!;
+
+				// Only care if we are the peer being positioned
+				if (msg.ForPeerId != _localIdentity.PeerId) return;
+
+				// Find ByPeerId's existing rect (for Width/Height)
+				var existing = _layout.Current?.Peers.FirstOrDefault(p => p.PeerId == msg.ByPeerId);
+				if (existing == null || existing.PeerId != msg.ByPeerId) return;
+
+				// Our desktop origin in Windows virtual space
+				var cluster = _displayService.GetLocalCluster();
+				double bMinX = cluster.Displays.Any() ? cluster.Displays.Min(d => (double)d.X) : 0;
+				double bMinY = cluster.Displays.Any() ? cluster.Displays.Min(d => (double)d.Y) : 0;
+
+				// ByPeer is to OUR left/above by RelDx/RelDy
+				var updated = existing with
+				{
+					X = bMinX - msg.RelDx,
+					Y = bMinY - msg.RelDy
+				};
+				_layout.UpsertPeerRect(updated);
+
+				// Persist so it survives restart
+				var store = _layoutStore.Load();
+				if (!store.Peers.TryGetValue(msg.ByPeerId, out var ps))
+				{
+					ps = new PeerLayoutState();
+					store.Peers[msg.ByPeerId] = ps;
+				}
+				ps.AppliedOffsetX = updated.X;
+				ps.AppliedOffsetY = updated.Y;
+				ps.HasSavedPosition = true;
+				_layoutStore.Save(store);
 			}
 		}
 		catch

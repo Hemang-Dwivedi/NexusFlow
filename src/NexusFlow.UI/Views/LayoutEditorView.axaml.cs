@@ -18,10 +18,9 @@ public partial class LayoutEditorView : UserControl
 		if (Vm is null) return;
 		if (sender is not Control c) return;
 		if (c.DataContext is not DisplayTileVm tile) return;
-		if (tile.IsLocal) return; // local tiles are not draggable
 
 		var p = e.GetPosition(this);
-		Vm.BeginDrag(tile.PeerId, p.X, p.Y);
+		Vm.BeginDrag(tile, p.X, p.Y);
 		e.Pointer.Capture(c);
 		e.Handled = true;
 	}
