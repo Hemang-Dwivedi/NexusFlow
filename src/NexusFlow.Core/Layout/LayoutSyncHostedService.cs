@@ -63,28 +63,44 @@ public sealed class LayoutSyncHostedService : IHostedService
 
 	private void OnPeerConnected(ConnectedPeer peer)
 	{
-		// Send my rect to the newly connected peer (best-effort)
+		// Send my rect + any saved layout position to the newly connected peer (best-effort)
 		_ = Task.Run(async () =>
 		{
 			try
 			{
 				var mine = BuildLocalPeerRect();
-				var msg = new PeerRectSyncV1(
-					PeerId: mine.PeerId,
-					DeviceName: mine.DeviceName,
-					MinX: (int)mine.X,
-					MinY: (int)mine.Y,
-					Width: (int)mine.Width,
-					Height: (int)mine.Height
-				);
 
-				await _connections.SendToPeerAsync(peer.PeerId, msg, CancellationToken.None)
-					.ConfigureAwait(false);
+				// 1. Always send our raw desktop rect
+				await _connections.SendToPeerAsync(peer.PeerId, new PeerRectSyncV1(
+					PeerId:     mine.PeerId,
+					DeviceName: mine.DeviceName,
+					MinX:       (int)mine.X,
+					MinY:       (int)mine.Y,
+					Width:      (int)mine.Width,
+					Height:     (int)mine.Height
+				), CancellationToken.None).ConfigureAwait(false);
+
+				// 2. If we have a saved layout position for this peer, re-send it so
+				//    the remote peer can immediately reconstruct the correct routing
+				//    state without the user having to click Apply again.
+				var saved = _layoutStore.Load();
+				if (saved.Peers.TryGetValue(peer.PeerId, out var peerState) && peerState.HasSavedPosition)
+				{
+					double relDx = peerState.AppliedOffsetX - mine.X;
+					double relDy = peerState.AppliedOffsetY - mine.Y;
+
+					await _connections.SendToPeerAsync(peer.PeerId, new LayoutPositionSyncV1(
+						ByPeerId:  _localIdentity.PeerId,
+						ForPeerId: peer.PeerId,
+						RelDx:     relDx,
+						RelDy:     relDy
+					), CancellationToken.None).ConfigureAwait(false);
+				}
 			}
 			catch { }
 		});
 
-		// Ensure local stays present
+		// Ensure local stays present in routing state
 		_layout.UpsertPeerRect(BuildLocalPeerRect());
 	}
 

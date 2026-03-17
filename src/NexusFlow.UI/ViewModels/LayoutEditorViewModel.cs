@@ -71,6 +71,11 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
     private double _dragStartDx, _dragStartDy;
     private double _dragNw, _dragNh;
 
+    // Block-drag: when dragging any local tile in a multi-monitor setup,
+    // ALL local tiles move together. We store their start positions here.
+    private bool _isBlockDrag;
+    private readonly Dictionary<string, (double Dx, double Dy)> _blockStartPos = new();
+
     public LayoutEditorViewModel(
         ILayoutState layout,
         ILayoutStore layoutStore,
@@ -238,6 +243,11 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         // 7. Build tile VMs
         var newTiles = new List<DisplayTileVm>();
 
+        // All local tiles are draggable. When there are multiple displays the
+        // whole block moves together (block-drag), so every tile acts as a
+        // handle for the group.
+        const bool localTilesDraggable = true;
+
         foreach (var d in sorted)
         {
             var p = _pos[d.StableId];
@@ -247,6 +257,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
                 d.X, d.Y, d.Width, d.Height)
             {
                 Nx = p.Dx, Ny = p.Dy, Nw = p.Nw, Nh = p.Nh,
+                IsDraggable    = localTilesDraggable,
                 IsActiveTarget = _localPeerId == _routing.ActiveTargetPeerId
             });
         }
@@ -263,6 +274,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
                 rect.X, rect.Y, rect.Width, rect.Height)
             {
                 Nx = p.Dx, Ny = p.Dy, Nw = p.Nw, Nh = p.Nh,
+                IsDraggable    = true,
                 IsActiveTarget = rect.PeerId == _routing.ActiveTargetPeerId
             });
         }
@@ -313,6 +325,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
     public void BeginDrag(DisplayTileVm tile, double mouseX, double mouseY)
     {
+        if (!tile.IsDraggable) return;
         var key = tile.IsLocal ? tile.StableId : tile.PeerId;
         if (!_pos.TryGetValue(key, out var p)) return;
 
@@ -324,23 +337,100 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         _dragStartDy     = p.Dy;
         _dragNw          = p.Nw;
         _dragNh          = p.Nh;
+
+        // Block drag: multiple local displays move as one unit
+        _isBlockDrag = tile.IsLocal && _localKeys.Count > 1;
+        _blockStartPos.Clear();
+        if (_isBlockDrag)
+            foreach (var lk in _localKeys)
+                if (_pos.TryGetValue(lk, out var lp))
+                    _blockStartPos[lk] = (lp.Dx, lp.Dy);
     }
 
     public void DragTo(double mouseX, double mouseY)
     {
         if (!IsDragging || string.IsNullOrWhiteSpace(_dragKey)) return;
 
-        double newDx = _dragStartDx + (mouseX - _dragStartMouseX);
-        double newDy = _dragStartDy + (mouseY - _dragStartMouseY);
+        double dxMouse = mouseX - _dragStartMouseX;
+        double dyMouse = mouseY - _dragStartMouseY;
 
-        // Clamp to canvas bounds
+        // ── Block drag (multi-monitor local group) ────────────────────────────
+        if (_isBlockDrag)
+        {
+            // Clamp the delta so that no tile in the block exits the canvas
+            double minDx = double.MinValue, maxDx = double.MaxValue;
+            double minDy = double.MinValue, maxDy = double.MaxValue;
+            foreach (var kv in _blockStartPos)
+            {
+                if (!_pos.TryGetValue(kv.Key, out var lp)) continue;
+                minDx = Math.Max(minDx, -kv.Value.Dx);
+                maxDx = Math.Min(maxDx, CanvasWidth  - lp.Nw - kv.Value.Dx);
+                minDy = Math.Max(minDy, -kv.Value.Dy);
+                maxDy = Math.Min(maxDy, CanvasHeight - lp.Nh - kv.Value.Dy);
+            }
+            double cdx = Math.Clamp(dxMouse, minDx, maxDx);
+            double cdy = Math.Clamp(dyMouse, minDy, maxDy);
+
+            // Snap the dragged tile's tentative position against remote tiles only
+            double tentDx = _dragStartDx + cdx;
+            double tentDy = _dragStartDy + cdy;
+            const double snapThreshold = 14.0;
+            double xSnap = tentDx, xBest = snapThreshold;
+            double ySnap = tentDy, yBest = snapThreshold;
+
+            foreach (var kv in _pos)
+            {
+                if (_localKeys.Contains(kv.Key)) continue;  // remote tiles only
+                var o = kv.Value;
+                double oL = o.Dx, oR = o.Dx + o.Nw, oT = o.Dy, oB = o.Dy + o.Nh;
+                double nR = tentDx + _dragNw, nB = tentDy + _dragNh;
+
+                (double d, double t)[] xCands =
+                [
+                    (Math.Abs(tentDx - oR), oR),
+                    (Math.Abs(nR     - oL), oL - _dragNw),
+                    (Math.Abs(tentDx - oL), oL),
+                    (Math.Abs(nR     - oR), oR - _dragNw),
+                ];
+                foreach (var (dist, target) in xCands)
+                    if (dist < xBest) { xBest = dist; xSnap = target; }
+
+                (double d, double t)[] yCands =
+                [
+                    (Math.Abs(tentDy - oB), oB),
+                    (Math.Abs(nB     - oT), oT - _dragNh),
+                    (Math.Abs(tentDy - oT), oT),
+                    (Math.Abs(nB     - oB), oB - _dragNh),
+                ];
+                foreach (var (dist, target) in yCands)
+                    if (dist < yBest) { yBest = dist; ySnap = target; }
+            }
+
+            // Apply the snapped delta uniformly to every tile in the block
+            double finalDx = xSnap - _dragStartDx;
+            double finalDy = ySnap - _dragStartDy;
+            foreach (var kv in _blockStartPos)
+            {
+                if (!_pos.TryGetValue(kv.Key, out var cur)) continue;
+                _pos[kv.Key] = (cur.Ax, cur.Ay,
+                    kv.Value.Dx + finalDx,
+                    kv.Value.Dy + finalDy,
+                    cur.Nw, cur.Nh);
+            }
+
+            RefreshLayout(_layout.Current);
+            return;
+        }
+
+        // ── Single-tile drag (remote peers, or single-monitor local) ──────────
+        double newDx = _dragStartDx + dxMouse;
+        double newDy = _dragStartDy + dyMouse;
         newDx = Math.Max(0, Math.Min(CanvasWidth  - _dragNw, newDx));
         newDy = Math.Max(0, Math.Min(CanvasHeight - _dragNh, newDy));
 
-        // Snap to nearest edge of any other tile (find globally best snap)
-        const double snapThreshold = 14.0;
-        double xSnap = newDx, xBest = snapThreshold;
-        double ySnap = newDy, yBest = snapThreshold;
+        const double snap = 14.0;
+        double xS = newDx, xB = snap;
+        double yS = newDy, yB = snap;
 
         foreach (var kv in _pos)
         {
@@ -349,31 +439,29 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             double oL = o.Dx, oR = o.Dx + o.Nw, oT = o.Dy, oB = o.Dy + o.Nh;
             double nR = newDx + _dragNw, nB = newDy + _dragNh;
 
-            // X candidates: (distance, snapped_x)
             (double d, double t)[] xCands =
             [
-                (Math.Abs(newDx - oR), oR),              // left → other's right
-                (Math.Abs(nR    - oL), oL - _dragNw),   // right → other's left
-                (Math.Abs(newDx - oL), oL),              // align lefts
-                (Math.Abs(nR    - oR), oR - _dragNw),   // align rights
+                (Math.Abs(newDx - oR), oR),
+                (Math.Abs(nR    - oL), oL - _dragNw),
+                (Math.Abs(newDx - oL), oL),
+                (Math.Abs(nR    - oR), oR - _dragNw),
             ];
             foreach (var (dist, target) in xCands)
-                if (dist < xBest) { xBest = dist; xSnap = target; }
+                if (dist < xB) { xB = dist; xS = target; }
 
-            // Y candidates
             (double d, double t)[] yCands =
             [
-                (Math.Abs(newDy - oB), oB),              // top → other's bottom
-                (Math.Abs(nB    - oT), oT - _dragNh),   // bottom → other's top
-                (Math.Abs(newDy - oT), oT),              // align tops
-                (Math.Abs(nB    - oB), oB - _dragNh),   // align bottoms
+                (Math.Abs(newDy - oB), oB),
+                (Math.Abs(nB    - oT), oT - _dragNh),
+                (Math.Abs(newDy - oT), oT),
+                (Math.Abs(nB    - oB), oB - _dragNh),
             ];
             foreach (var (dist, target) in yCands)
-                if (dist < yBest) { yBest = dist; ySnap = target; }
+                if (dist < yB) { yB = dist; yS = target; }
         }
 
-        if (_pos.TryGetValue(_dragKey, out var cur))
-            _pos[_dragKey] = (cur.Ax, cur.Ay, xSnap, ySnap, cur.Nw, cur.Nh);
+        if (_pos.TryGetValue(_dragKey, out var cur2))
+            _pos[_dragKey] = (cur2.Ax, cur2.Ay, xS, yS, cur2.Nw, cur2.Nh);
 
         RefreshLayout(_layout.Current);
     }
@@ -398,10 +486,15 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanApply))]
     private void Apply()
     {
-        // Use the leftmost current local tile as the X anchor for canvas→virtual conversion
+        // Use the top-left corner of the local display cluster as the canvas→virtual
+        // anchor.  This correctly accounts for the block having been dragged.
         double anchorCanvasX = _localKeys.Where(_pos.ContainsKey)
             .Select(k => _pos[k].Dx)
             .DefaultIfEmpty(_defaultOriginX)
+            .Min();
+        double anchorCanvasY = _localKeys.Where(_pos.ContainsKey)
+            .Select(k => _pos[k].Dy)
+            .DefaultIfEmpty(_defaultOriginY)
             .Min();
 
         foreach (var key in _pos.Keys.ToList())
@@ -414,8 +507,8 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             if (_localKeys.Contains(key)) continue;
             if (!_rawRects.TryGetValue(key, out var rawRect)) continue;
 
-            double virtualX = _localMinX + (v.Dx - anchorCanvasX)  / Math.Max(0.0001, _localScale);
-            double virtualY = _localMinY + (v.Dy - _defaultOriginY) / Math.Max(0.0001, _localScale);
+            double virtualX = _localMinX + (v.Dx - anchorCanvasX) / Math.Max(0.0001, _localScale);
+            double virtualY = _localMinY + (v.Dy - anchorCanvasY) / Math.Max(0.0001, _localScale);
 
             // Persist
             if (!_persisted.Peers.TryGetValue(key, out var peerState))
@@ -487,6 +580,8 @@ public sealed partial class DisplayTileVm : ObservableObject
     public double VirtualY      { get; }
     public double VirtualW      { get; }
     public double VirtualH      { get; }
+
+    public bool IsDraggable { get; init; }
 
     [ObservableProperty] private double nx;
     [ObservableProperty] private double ny;

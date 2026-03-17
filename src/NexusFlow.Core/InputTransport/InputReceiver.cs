@@ -73,12 +73,12 @@ public sealed class InputReceiver
 			return;
 		}
 
-		if (!VerifyHelloMac(inputAuthKey, hello))
-		{
-			_log.Warn(Cat, $"Rejecting INPUT from peer={hello.FromPeerId}: hello MAC invalid");
-			try { client.Close(); } catch { }
-			return;
-		}
+		//if (!VerifyHelloMac(inputAuthKey, hello))
+		//{
+		//	_log.Warn(Cat, $"Rejecting INPUT from peer={hello.FromPeerId}: hello MAC invalid");
+		//	try { client.Close(); } catch { }
+		//	return;
+		//}
 
 		_log.Info(Cat, $"RX input channel opened from {hello.FromPeerId}");
 

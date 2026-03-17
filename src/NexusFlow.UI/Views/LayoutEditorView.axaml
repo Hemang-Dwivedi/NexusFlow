@@ -40,9 +40,13 @@
       <Setter Property="BorderBrush"     Value="#3A4A65"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius"    Value="6"/>
-      <Setter Property="Cursor"          Value="SizeAll"/>
+      <Setter Property="Cursor"          Value="Arrow"/>
     </Style>
-    <!-- Local tiles: blue tint, draggable like remote tiles -->
+    <!-- Draggable tiles show the move cursor -->
+    <Style Selector="Border.displayTile.draggable">
+      <Setter Property="Cursor" Value="SizeAll"/>
+    </Style>
+    <!-- Local tiles: blue tint -->
     <Style Selector="Border.displayTile.localTile">
       <Setter Property="Background"  Value="#0D1E3A"/>
       <Setter Property="BorderBrush" Value="#1A4070"/>
@@ -154,6 +158,7 @@
                   <DataTemplate x:DataType="vm:DisplayTileVm">
                     <Border Classes="displayTile"
                             Classes.localTile="{Binding IsLocal}"
+                            Classes.draggable="{Binding IsDraggable}"
                             Classes.activeTarget="{Binding IsActiveTarget}"
                             Width="{Binding Nw}"
                             Height="{Binding Nh}"
