@@ -10,6 +10,10 @@
         <TextBlock Text="Routing State" FontSize="16"/>
         <TextBlock Text="{Binding ActiveTargetPeerId, StringFormat=Active Target: {0}}" />
         <TextBlock Text="{Binding ActiveSourcePeerId, StringFormat=Active Source: {0}}" />
+
+        <!-- Local input suppression pill: green = suppressing (routing to remote), grey = local -->
+        <TextBlock Text="{Binding IsLocalInputSuppressed, StringFormat=Local input suppressed: {0}}"
+                   FontWeight="Bold" Margin="0,4,0,0" />
       </StackPanel>
     </Border>
 

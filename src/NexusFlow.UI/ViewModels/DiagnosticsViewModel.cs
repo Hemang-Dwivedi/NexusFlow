@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using NexusFlow.Core.Input;
 using NexusFlow.UI.Services;
 using NexusFlow.Core.Control;
+using NexusFlow.Input;
 
 namespace NexusFlow.UI.ViewModels;
 
@@ -18,13 +19,15 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	private readonly IDiagnosticsLog _log;
 	private readonly IFailsafeService _failsafe;
 	private readonly IInputSourceSwitchingSimulator _inputSim;
+	private readonly IWinHookCaptureService _hook;
 
 	public DiagnosticsViewModel(
 	IRoutingEngine routing,
 	IConnectedPeersSnapshot peers,
 	IDiagnosticsLog log,
 	IFailsafeService failsafe,
-	IInputSourceSwitchingSimulator inputSim)
+	IInputSourceSwitchingSimulator inputSim,
+	IWinHookCaptureService hook)
 
 	{
 		_routing = routing;
@@ -32,6 +35,7 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		_log = log;
 		_failsafe = failsafe;
 		_inputSim = inputSim;
+		_hook = hook;
 		InputThresholdInfo = _inputSim.MovementThresholdInfo;
 
 		SelectedSimPeerItem = FindByPeerId(Peers.LocalPeerId);
@@ -42,11 +46,21 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		ActiveTargetPeerId = _routing.ActiveTargetPeerId;
 		ActiveSourcePeerId = _routing.ActiveSourcePeerId;
 
-		_routing.ActiveTargetChanged += (_, id) => ActiveTargetPeerId = id;
+		_routing.ActiveTargetChanged += (_, id) =>
+		{
+			ActiveTargetPeerId = id;
+			// Refresh suppression state a tick after routing fires (BlockInput is synchronous,
+			// but the hook flag is set synchronously too — just let the UI catch up).
+			Dispatcher.UIThread.Post(() => IsLocalInputSuppressed = _hook.SuppressLocalNonMoveInput);
+		};
 		_routing.ActiveSourceChanged += (_, id) => ActiveSourcePeerId = id;
 
 		IsFailsafeBlocked = _failsafe.IsBlocked;
-		_failsafe.Changed += b => Dispatcher.UIThread.Post(() => IsFailsafeBlocked = b);
+		_failsafe.Changed += b => Dispatcher.UIThread.Post(() =>
+		{
+			IsFailsafeBlocked = b;
+			IsLocalInputSuppressed = _hook.SuppressLocalNonMoveInput;
+		});
 
 		// seed logs
 		foreach (var e in _log.Snapshot())
@@ -66,6 +80,7 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	[ObservableProperty] private string _activeSourcePeerId = "";
 
 	[ObservableProperty] private bool _isFailsafeBlocked;
+	[ObservableProperty] private bool _isLocalInputSuppressed;
 
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedTargetItem;
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedSourceItem;

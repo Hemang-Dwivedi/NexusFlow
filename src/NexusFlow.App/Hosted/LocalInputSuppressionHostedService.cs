@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Hosting;
+using NexusFlow.Core.Diagnostics;
 using NexusFlow.Core.Routing;
 using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Input;
+using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,9 +29,12 @@ namespace NexusFlow.App.Hosted;
 /// </summary>
 public sealed class LocalInputSuppressionHostedService : IHostedService
 {
+    private const string Cat = "suppression";
+
     private readonly IWinHookCaptureService _hook;
     private readonly IRoutingEngine _routing;
     private readonly IFailsafeService _failsafe;
+    private readonly IDiagnosticsLog _log;
     private readonly string _localPeerId;
 
     // Track whether we currently have BlockInput active so we only
@@ -40,11 +45,13 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
         IWinHookCaptureService hook,
         IRoutingEngine routing,
         IFailsafeService failsafe,
+        IDiagnosticsLog log,
         ILocalIdentity me)
     {
         _hook = hook;
         _routing = routing;
         _failsafe = failsafe;
+        _log = log;
         _localPeerId = me.PeerId;
     }
 
@@ -52,6 +59,7 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
     {
         _routing.ActiveTargetChanged += OnRoutingChanged;
         _failsafe.Changed += OnFailsafeChanged;
+        _log.Info(Cat, $"Service started. LocalPeerId={_localPeerId[..Math.Min(8, _localPeerId.Length)]}");
         Refresh();
         return Task.CompletedTask;
     }
@@ -61,17 +69,31 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
         _routing.ActiveTargetChanged -= OnRoutingChanged;
         _failsafe.Changed -= OnFailsafeChanged;
         ApplySuppression(false);
+        _log.Info(Cat, "Service stopped — suppression released.");
         return Task.CompletedTask;
     }
 
-    private void OnRoutingChanged(object? sender, string _) => Refresh();
-    private void OnFailsafeChanged(bool _) => Refresh();
+    private void OnRoutingChanged(object? sender, string newTarget)
+    {
+        _log.Info(Cat, $"ActiveTargetChanged -> {newTarget[..Math.Min(8, newTarget.Length)]} (local={_localPeerId[..Math.Min(8, _localPeerId.Length)]})");
+        Refresh();
+    }
+
+    private void OnFailsafeChanged(bool blocked)
+    {
+        _log.Info(Cat, $"Failsafe changed -> {(blocked ? "BLOCKED" : "unblocked")}");
+        Refresh();
+    }
 
     private void Refresh()
     {
-        var targetIsRemote = _routing.ActiveTargetPeerId != _localPeerId;
+        var target = _routing.ActiveTargetPeerId;
+        var targetIsRemote = target != _localPeerId;
         var failsafeBlocked = _failsafe.IsBlocked;
-        ApplySuppression(targetIsRemote && !failsafeBlocked);
+        var shouldSuppress = targetIsRemote && !failsafeBlocked;
+
+        _log.Trace(Cat, $"Refresh: target={target[..Math.Min(8, target.Length)]} isRemote={targetIsRemote} failsafe={failsafeBlocked} => suppress={shouldSuppress}");
+        ApplySuppression(shouldSuppress);
     }
 
     private void ApplySuppression(bool suppress)
@@ -84,7 +106,8 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
             return;
 
         _blockInputActive = suppress;
-        BlockInput(suppress);
+        var ok = BlockInput(suppress);
+        _log.Info(Cat, $"BlockInput({suppress}) => {(ok ? "OK" : "FAILED — check process elevation")}");
     }
 
     // ── Win32 ──────────────────────────────────────────────────────────────────
