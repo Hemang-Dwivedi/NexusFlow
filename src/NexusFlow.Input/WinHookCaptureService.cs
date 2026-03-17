@@ -258,8 +258,19 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			// ── Mouse moves ───────────────────────────────────────────────────────
 			// Always raise MouseMove so CursorTracker / TargetSwitchingEngine receive
 			// deltas for boundary detection and remote cursor forwarding.
-			// When routing to remote: return 1 so the local OS cursor freezes in place
-			// (the visible cursor belongs on the remote screen, not moving locally).
+			//
+			// IMPORTANT — reference-point semantics when frozen:
+			// Returning (IntPtr)1 keeps the OS cursor at the frozen position P0.
+			// Windows then computes every subsequent pt as:
+			//   pt[n] = P0 + acceleration(hardware_delta_this_interval)
+			// so dx = pt[n] - P0 = acceleration(hardware_delta_n)   [correct]
+			//
+			// If we updated _lastX/_lastY with pt[n-1] we would get:
+			//   dx = pt[n] - pt[n-1] = accel(d_n) - accel(d_{n-1})  [wrong]
+			// At constant speed this yields dx=0 → remote cursor stops after frame 1.
+			//
+			// Fix: when routing to remote, do NOT advance _lastX/_lastY so that P0
+			// remains the reference for every event in the frozen session.
 			if (msg == MouseMessage.WM_MOUSEMOVE)
 			{
 				var x = ms.pt.x;
@@ -277,11 +288,18 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 						));
 					}
 				}
-				_lastX = x; _lastY = y; _hasLast = true;
 
-				return routeToRemote
-					? (IntPtr)1                                              // freeze local cursor
-					: CallNextHookEx(_mouseHook, nCode, wParam, lParam);    // move local cursor
+				if (routeToRemote)
+				{
+					// Keep _lastX/_lastY at P0 (the frozen cursor position).
+					// Only initialise on the very first event ever.
+					if (!_hasLast) { _lastX = x; _lastY = y; _hasLast = true; }
+					return (IntPtr)1; // freeze local cursor
+				}
+
+				// Local routing — advance the reference and pass through.
+				_lastX = x; _lastY = y; _hasLast = true;
+				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 			}
 
 			// ── Buttons and wheel ─────────────────────────────────────────────────
