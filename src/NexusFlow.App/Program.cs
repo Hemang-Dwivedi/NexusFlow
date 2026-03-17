@@ -66,6 +66,7 @@ namespace NexusFlow.App
 					});
 
 					services.AddSingleton<JsonLayoutStore>(_ => new JsonLayoutStore("NexusFlow"));
+				services.AddSingleton<ILayoutStore>(sp => sp.GetRequiredService<JsonLayoutStore>());
 
 					// ---------- Core: Discovery ----------
 					const int tcpPort = 49800;

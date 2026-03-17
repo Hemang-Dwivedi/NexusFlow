@@ -18,12 +18,12 @@
 
   <UserControl.Styles>
     <Style Selector="Button.layoutBtn">
-      <Setter Property="Background"   Value="#1C1F26"/>
-      <Setter Property="BorderBrush"  Value="{StaticResource Stroke}"/>
+      <Setter Property="Background"      Value="#1C1F26"/>
+      <Setter Property="BorderBrush"     Value="{StaticResource Stroke}"/>
       <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="CornerRadius" Value="8"/>
-      <Setter Property="Padding"      Value="12,8"/>
-      <Setter Property="Foreground"   Value="{StaticResource Text}"/>
+      <Setter Property="CornerRadius"    Value="8"/>
+      <Setter Property="Padding"         Value="12,8"/>
+      <Setter Property="Foreground"      Value="{StaticResource Text}"/>
     </Style>
     <Style Selector="Button.layoutBtn:disabled">
       <Setter Property="Opacity" Value="0.4"/>
@@ -34,25 +34,25 @@
       <Setter Property="Foreground"  Value="White"/>
     </Style>
 
-    <!-- Display tile base style -->
+    <!-- Base display tile -->
     <Style Selector="Border.displayTile">
-      <Setter Property="Background"      Value="#1C2030"/>
-      <Setter Property="BorderBrush"     Value="#3A4055"/>
+      <Setter Property="Background"      Value="#1E2538"/>
+      <Setter Property="BorderBrush"     Value="#3A4A65"/>
       <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="CornerRadius"    Value="4"/>
+      <Setter Property="CornerRadius"    Value="6"/>
       <Setter Property="Cursor"          Value="SizeAll"/>
     </Style>
-    <!-- Local display tiles: blue tint, no drag cursor -->
+    <!-- Local tiles: blue tint, not draggable -->
     <Style Selector="Border.displayTile.localTile">
-      <Setter Property="Background"  Value="#0E2040"/>
-      <Setter Property="BorderBrush" Value="#1E4070"/>
+      <Setter Property="Background"  Value="#0D1E3A"/>
+      <Setter Property="BorderBrush" Value="#1A4070"/>
       <Setter Property="Cursor"      Value="Arrow"/>
     </Style>
     <!-- Active routing target highlight -->
     <Style Selector="Border.displayTile.activeTarget">
       <Setter Property="BorderBrush"     Value="#3B82F6"/>
       <Setter Property="BorderThickness" Value="2"/>
-      <Setter Property="BoxShadow"       Value="0 0 10 2 #3B82F6"/>
+      <Setter Property="BoxShadow"       Value="0 0 12 3 #3B82F6"/>
     </Style>
   </UserControl.Styles>
 
@@ -63,9 +63,7 @@
       <Border Grid.Row="0"
               Background="{StaticResource Card}"
               BorderBrush="{StaticResource Stroke}"
-              BorderThickness="1"
-              CornerRadius="12"
-              Padding="14">
+              BorderThickness="1" CornerRadius="12" Padding="14">
         <DockPanel LastChildFill="True">
 
           <StackPanel DockPanel.Dock="Left" Spacing="2">
@@ -108,12 +106,12 @@
               BorderThickness="1" CornerRadius="12" Padding="12">
         <Border Background="{StaticResource CanvasBg}"
                 BorderBrush="{StaticResource StrokeSoft}"
-                BorderThickness="1" CornerRadius="10" Padding="0">
+                BorderThickness="1" CornerRadius="10">
 
           <ScrollViewer HorizontalScrollBarVisibility="Auto"
                         VerticalScrollBarVisibility="Auto">
 
-            <!-- Fixed-size canvas matching WorkspaceWidth/Height -->
+            <!-- Fixed-size canvas -->
             <Grid Width="{Binding WorkspaceWidth}" Height="{Binding WorkspaceHeight}">
 
               <!-- Layer 1: peer name labels (behind tiles) -->
@@ -121,16 +119,20 @@
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
+                <!-- Position the ContentPresenter directly — guaranteed Canvas layout -->
+                <ItemsControl.ItemContainerTheme>
+                  <ControlTheme TargetType="ContentPresenter">
+                    <Setter Property="Canvas.Left" Value="{Binding LabelX}"/>
+                    <Setter Property="Canvas.Top"  Value="{Binding LabelY}"/>
+                  </ControlTheme>
+                </ItemsControl.ItemContainerTheme>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:PeerGroupVm">
-                    <Border Canvas.Left="{Binding LabelX}"
-                            Canvas.Top="{Binding LabelY}"
-                            Width="{Binding LabelWidth}">
+                    <Border Width="{Binding LabelWidth}">
                       <TextBlock Text="{Binding PeerName}"
                                  HorizontalAlignment="Center"
                                  TextAlignment="Center"
-                                 FontSize="11"
-                                 FontWeight="Medium"
+                                 FontSize="11" FontWeight="Medium"
                                  Foreground="#A6AFBF"/>
                     </Border>
                   </DataTemplate>
@@ -142,25 +144,42 @@
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
+                <!-- Position the ContentPresenter directly — guaranteed Canvas layout -->
+                <ItemsControl.ItemContainerTheme>
+                  <ControlTheme TargetType="ContentPresenter">
+                    <Setter Property="Canvas.Left" Value="{Binding Nx}"/>
+                    <Setter Property="Canvas.Top"  Value="{Binding Ny}"/>
+                  </ControlTheme>
+                </ItemsControl.ItemContainerTheme>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:DisplayTileVm">
                     <Border Classes="displayTile"
                             Classes.localTile="{Binding IsLocal}"
                             Classes.activeTarget="{Binding IsActiveTarget}"
-                            Canvas.Left="{Binding Nx}"
-                            Canvas.Top="{Binding Ny}"
                             Width="{Binding Nw}"
                             Height="{Binding Nh}"
                             PointerPressed="TilePointerPressed"
                             PointerMoved="TilePointerMoved"
                             PointerReleased="TilePointerReleased">
-                      <Grid>
-                        <TextBlock Text="{Binding DisplayNumber}"
+                      <Grid RowDefinitions="*,Auto">
+                        <!-- Display number (center) -->
+                        <TextBlock Grid.Row="0"
+                                   Text="{Binding DisplayNumber}"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"
-                                   FontSize="20"
-                                   FontWeight="Bold"
+                                   FontSize="22" FontWeight="Bold"
                                    Foreground="White"/>
+                        <!-- Peer/device label (bottom strip for remote tiles) -->
+                        <Border Grid.Row="1"
+                                Background="#00000040"
+                                Padding="4,2"
+                                IsVisible="{Binding !IsLocal}">
+                          <TextBlock Text="{Binding PeerName}"
+                                     HorizontalAlignment="Center"
+                                     FontSize="9"
+                                     Foreground="#A6AFBF"
+                                     TextTrimming="CharacterEllipsis"/>
+                        </Border>
                       </Grid>
                     </Border>
                   </DataTemplate>
