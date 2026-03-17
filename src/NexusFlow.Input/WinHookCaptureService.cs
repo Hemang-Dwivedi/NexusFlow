@@ -299,11 +299,12 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			// swallow - never break global input
 		}
 
-		// Always call next hook first
-		CallNextHookEx(_mouseHook, nCode, wParam, lParam);
-
-		// For non-move events, suppress local delivery when routing to remote peer
-		// Mouse moves are always passed through so cursor tracking and boundary detection work
+		// For non-move events: suppress local delivery WITHOUT calling CallNextHookEx.
+		// Unlike keyboard (where GlobalHotkeyListener is also in the WH_KEYBOARD_LL chain),
+		// WinHookCaptureService is the only WH_MOUSE_LL hook. Calling CallNextHookEx first
+		// passes directly to the OS end-of-chain which delivers the event to applications
+		// before our return value is checked. Returning 1 immediately is the correct approach.
+		// Mouse moves always pass through so cursor tracking and boundary detection work.
 		if (_suppressLocalNonMoveInput && nCode >= 0)
 		{
 			var msg2 = (MouseMessage)wParam;
@@ -311,7 +312,7 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 				return (IntPtr)1;
 		}
 
-		return (IntPtr)0;
+		return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 	}
 
 	// -------- Win32 interop --------
