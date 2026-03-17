@@ -1,7 +1,8 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using NexusFlow.Core.Control;
 using NexusFlow.Core.Services;
 using NexusFlow.Protocol.Control;
+using NexusFlow.Settings.Layout;
 using System;
 using System.Linq;
 using System.Threading;
@@ -22,15 +23,18 @@ public sealed class LayoutSyncHostedService : IHostedService
 	private readonly ConnectionManager _connections;
 	private readonly DisplayService _displayService;
 	private readonly ILayoutState _layout;
+	private readonly ILayoutStore _layoutStore;
 
 	public LayoutSyncHostedService(
 		ConnectionManager connections,
 		DisplayService displayService,
-		ILayoutState layout)
+		ILayoutState layout,
+		ILayoutStore layoutStore)
 	{
 		_connections = connections;
 		_displayService = displayService;
 		_layout = layout;
+		_layoutStore = layoutStore;
 	}
 
 	public Task StartAsync(CancellationToken cancellationToken)
@@ -95,14 +99,23 @@ public sealed class LayoutSyncHostedService : IHostedService
 
 			var msg = ControlCodec.Decode<PeerRectSyncV1>(payload)!;
 
-			_layout.UpsertPeerRect(new PeerRect(
+			var raw = new PeerRect(
 				PeerId: msg.PeerId,
 				DeviceName: msg.DeviceName,
 				X: msg.MinX,
 				Y: msg.MinY,
 				Width: msg.Width,
 				Height: msg.Height
-			));
+			);
+			var saved = _layoutStore.Load();
+			if (saved.Peers.TryGetValue(msg.PeerId, out var peerState) && peerState.HasSavedPosition)
+			{
+				_layout.UpsertPeerRect(raw with { X = peerState.AppliedOffsetX, Y = peerState.AppliedOffsetY });
+			}
+			else
+			{
+				_layout.UpsertPeerRect(raw);
+			}
 		}
 		catch
 		{
@@ -121,7 +134,7 @@ public sealed class LayoutSyncHostedService : IHostedService
 		var minY = cluster.Displays.Min(d => d.Y);
 		var maxX = cluster.Displays.Max(d => d.X + d.Width);
 		var maxY = cluster.Displays.Max(d => d.Y + d.Height);
-		
+
 		return new PeerRect(
 			PeerId: cluster.PeerId,
 			DeviceName: cluster.PeerName,

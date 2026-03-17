@@ -12,6 +12,7 @@ public sealed class PeerLayoutState
 {
 	public double AppliedOffsetX { get; set; }
 	public double AppliedOffsetY { get; set; }
+	public bool HasSavedPosition { get; set; }
 
 	// Optional: snapshot to help with future matching
 	public List<string> DisplayStableIds { get; set; } = new();

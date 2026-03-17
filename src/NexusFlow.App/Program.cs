@@ -109,7 +109,8 @@ namespace NexusFlow.App
 						var store = sp.GetRequiredService<JsonLayoutStore>();
 						var routing = sp.GetRequiredService<IRoutingEngine>();
 						var me = sp.GetRequiredService<ILocalIdentity>();
-						return new LayoutEditorViewModel(layoutState, store, routing, me);
+						var displayService = sp.GetRequiredService<DisplayService>();
+						return new LayoutEditorViewModel(layoutState, store, routing, me, displayService);
 					});
 
 
@@ -146,10 +147,10 @@ namespace NexusFlow.App
 					services.AddSingleton<IRoutingEngine>(sp => sp.GetRequiredService<RoutingEngine>());
 					services.AddSingleton<NexusFlow.Core.Input.LocalInputCaptureOrchestrator>();
 					services.AddSingleton<NexusFlow.Core.InputTransport.InputReceiver>();
-					
+
 					services.AddSingleton<NexusFlow.Discovery.Peers.PeerRegistry>(sp =>
 					{
-						// choose a sensible “peer stale” TTL (example: 15 seconds)
+						// choose a sensible "peer stale" TTL (example: 15 seconds)
 						var expiry = TimeSpan.FromSeconds(3600);
 						var sweep = TimeSpan.FromSeconds(15);
 						return new NexusFlow.Discovery.Peers.PeerRegistry(expiry, sweep);

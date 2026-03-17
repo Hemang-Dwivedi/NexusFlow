@@ -1,48 +1,48 @@
-﻿using Avalonia.Threading;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using NexusFlow.Core.Layout;
 using NexusFlow.Core.Routing;
+using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Settings.Layout;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using NexusFlow.Display.Layout;
-using NexusFlow.Display.Models;
 
 namespace NexusFlow.UI.ViewModels;
 
 /// <summary>
-/// Layout editor that renders ALL peers known to the runtime layout state.
-/// Peers are drawn as 1 rectangle each (desktop bounds).
-/// Offsets are editable (Draft) and persisted to ILayoutStore.
+/// Windows-Display-Settings-style layout editor.
+/// Local peer: each physical display as an individual tile (from DisplayService).
+/// Remote peers: one draggable tile per peer (bounding box from ILayoutState).
+/// Positions stored as absolute virtual coords. Apply updates ILayoutState + ILayoutStore.
 /// </summary>
 public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 {
 	private readonly ILayoutState _layout;
 	private readonly ILayoutStore _layoutStore;
 	private readonly IRoutingEngine _routing;
+	private readonly DisplayService _displayService;
 	private readonly string _localPeerId;
 	private NexusFlow.Settings.Layout.LayoutState _persisted;
 
-	public ObservableCollection<PeerBlockVm> PeerBlocks { get; } = new();
+	public ObservableCollection<DisplayTileVm> DisplayTiles { get; } = new();
+	public ObservableCollection<PeerGroupVm> PeerGroups { get; } = new();
 
 	public double CanvasWidth { get; } = 900;
 	public double CanvasHeight { get; } = 400;
-
-	public double WorkspaceWidth  => CanvasWidth;
+	public double WorkspaceWidth => CanvasWidth;
 	public double WorkspaceHeight => CanvasHeight;
 
-	// Draft/applied offsets per peerId (stored in LayoutStore)
-	// ax/ay = applied, dx/dy = draft
-	private readonly Dictionary<string, (double ax, double ay, double dx, double dy)> _offsets = new();
+	// Absolute virtual position per remote peer: (appliedX, appliedY, draftX, draftY)
+	private readonly Dictionary<string, (double ax, double ay, double dx, double dy)> _positions = new();
 
-	// Last snapshot peer rects (virtual desktop px)
-	private readonly Dictionary<string, PeerRect> _peerRects = new();
+	// Raw PeerRects as reported by ILayoutState (before our position override)
+	private readonly Dictionary<string, PeerRect> _rawRects = new();
 
-	// Last normalization parameters (so Drag can convert canvas <-> virtual precisely)
+	// Normalization state (canvas <-> virtual conversion)
 	private double _lastMinX, _lastMinY;
 	private double _lastScale = 1.0;
 	private double _lastBaseX, _lastBaseY;
@@ -50,58 +50,33 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	[ObservableProperty] private bool isDirty;
 	[ObservableProperty] private string activeTargetName = "Routing to: Local";
 
-	// drag
+	// Drag
 	public bool IsDragging { get; private set; }
 	private string? _dragPeerId;
 	private double _dragStartMouseX, _dragStartMouseY;
 	private double _dragStartDraftX, _dragStartDraftY;
+	private double _dragScale = 1.0;
 
-	// ---- Non-overlap tuning (canvas-space) ----
-	private const double PeerPadding = 10;        // minimum gap between peer blocks
-	private const int ResolveMaxIterations = 10;  // keep small + stable
-
-	private readonly struct RectD
-	{
-		public readonly double X, Y, W, H;
-		public double Left => X;
-		public double Top => Y;
-		public double Right => X + W;
-		public double Bottom => Y + H;
-
-		public RectD(double x, double y, double w, double h)
-		{
-			X = x; Y = y; W = w; H = h;
-		}
-	}
-
-	private static bool Intersects(in RectD a, in RectD b)
-		=> a.Left < b.Right &&
-		   a.Right > b.Left &&
-		   a.Top < b.Bottom &&
-		   a.Bottom > b.Top;
-
-	private static (double ox, double oy) Overlap(in RectD a, in RectD b)
-	{
-		var ox = Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left);
-		var oy = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Top, b.Top);
-		return (ox, oy);
-	}
-
-	public LayoutEditorViewModel(ILayoutState layout, ILayoutStore layoutStore, IRoutingEngine routing, ILocalIdentity me)
+	public LayoutEditorViewModel(
+		ILayoutState layout,
+		ILayoutStore layoutStore,
+		IRoutingEngine routing,
+		ILocalIdentity me,
+		DisplayService displayService)
 	{
 		_layout = layout;
 		_layoutStore = layoutStore;
 		_routing = routing;
 		_localPeerId = me.PeerId;
+		_displayService = displayService;
 
 		_persisted = _layoutStore.Load();
-		LoadOffsetsFromStore();
+		LoadPositionsFromStore();
 
 		_layout.Changed += OnLayoutChanged;
 		_routing.ActiveTargetChanged += OnActiveTargetChanged;
 
-		// initial populate if already present
-		RefreshFromSnapshot(_layout.Current);
+		RefreshLayout(_layout.Current);
 	}
 
 	public void Dispose()
@@ -111,234 +86,187 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	}
 
 	private void OnLayoutChanged(LayoutSnapshot? snap)
-	{
-		Dispatcher.UIThread.Post(() => RefreshFromSnapshot(snap));
-	}
+		=> Dispatcher.UIThread.Post(() => RefreshLayout(snap));
 
 	private void OnActiveTargetChanged(object? sender, string peerId)
 	{
 		Dispatcher.UIThread.Post(() =>
 		{
-			foreach (var b in PeerBlocks)
-				b.IsActiveTarget = b.PeerId == peerId;
-
-			var name = PeerBlocks.FirstOrDefault(b => b.PeerId == peerId)?.PeerName
+			foreach (var t in DisplayTiles) t.IsActiveTarget = t.PeerId == peerId;
+			foreach (var g in PeerGroups) g.IsActiveTarget = g.PeerId == peerId;
+			var name = PeerGroups.FirstOrDefault(g => g.IsActiveTarget)?.PeerName
 				?? (peerId == _localPeerId ? "Local" : peerId[..Math.Min(8, peerId.Length)]);
 			ActiveTargetName = $"Routing to: {name}";
 		});
 	}
 
-	private void LoadOffsetsFromStore()
+	private void LoadPositionsFromStore()
 	{
-		_offsets.Clear();
+		_positions.Clear();
 		foreach (var kv in _persisted.Peers)
 		{
-			var peerId = kv.Key;
-			var st = kv.Value;
-
-			var ax = st.AppliedOffsetX;
-			var ay = st.AppliedOffsetY;
-			_offsets[peerId] = (ax, ay, ax, ay);
+			if (!kv.Value.HasSavedPosition) continue;
+			var p = kv.Value;
+			_positions[kv.Key] = (p.AppliedOffsetX, p.AppliedOffsetY, p.AppliedOffsetX, p.AppliedOffsetY);
 		}
 	}
 
-	private (double ax, double ay, double dx, double dy) GetOrCreateOffsets(string peerId)
+	private void RefreshLayout(LayoutSnapshot? snap)
 	{
-		if (_offsets.TryGetValue(peerId, out var v))
-			return v;
-
-		_offsets[peerId] = (0, 0, 0, 0);
-		return _offsets[peerId];
-	}
-
-	private void SetDraft(string peerId, double dx, double dy)
-	{
-		var v = GetOrCreateOffsets(peerId);
-		_offsets[peerId] = (v.ax, v.ay, dx, dy);
-		RefreshDirtyState();
-	}
-
-	private void RefreshDirtyState()
-	{
-		IsDirty = _offsets.Values.Any(v =>
-			Math.Abs(v.dx - v.ax) > 0.01 ||
-			Math.Abs(v.dy - v.ay) > 0.01);
-
-		ApplyCommand.NotifyCanExecuteChanged();
-		RevertCommand.NotifyCanExecuteChanged();
-	}
-
-	private void RefreshFromSnapshot(LayoutSnapshot? snap)
-	{
-		PeerBlocks.Clear();
-		_peerRects.Clear();
-
-		var peers = snap?.Peers?.ToList() ?? new List<PeerRect>();
-		if (peers.Count == 0)
+		// Update raw rects cache
+		_rawRects.Clear();
+		if (snap != null)
 		{
+			foreach (var rect in snap.Peers)
+			{
+				if (rect.PeerId != _localPeerId)
+					_rawRects[rect.PeerId] = rect;
+			}
+		}
+
+		// Initialize positions for new remote peers
+		foreach (var kv in _rawRects)
+		{
+			if (!_positions.ContainsKey(kv.Key))
+			{
+				var r = kv.Value;
+				_positions[kv.Key] = (r.X, r.Y, r.X, r.Y);
+			}
+		}
+
+		// Build virtual tile list: (peerId, peerName, isLocal, dispNum, isPrimary, stableId, vx, vy, vw, vh)
+		var vTiles = new List<(string peerId, string peerName, bool isLocal, int dispNum,
+			bool isPrimary, string stableId, double vx, double vy, double vw, double vh)>();
+
+		// Local peer -- individual physical displays
+		var localCluster = _displayService.GetLocalCluster();
+		foreach (var d in localCluster.Displays)
+		{
+			vTiles.Add((_localPeerId, localCluster.PeerName, true, d.DisplayNumber, d.IsPrimary,
+				d.StableId, d.X, d.Y, d.Width, d.Height));
+		}
+
+		// Remote peers -- one tile per peer using draft position
+		foreach (var kv in _rawRects)
+		{
+			var rect = kv.Value;
+			var pos = _positions[rect.PeerId];
+			var name = string.IsNullOrEmpty(rect.DeviceName)
+				? rect.PeerId[..Math.Min(8, rect.PeerId.Length)]
+				: rect.DeviceName;
+			vTiles.Add((rect.PeerId, name, false, 1, true, "remote",
+				pos.dx, pos.dy, rect.Width, rect.Height));
+		}
+
+		if (vTiles.Count == 0)
+		{
+			DisplayTiles.Clear();
+			PeerGroups.Clear();
 			RefreshDirtyState();
 			return;
 		}
 
-		foreach (var p in peers)
-			_peerRects[p.PeerId] = p;
-
-		// Ensure offset entries exist for all peers
-		foreach (var p in peers)
-			_ = GetOrCreateOffsets(p.PeerId);
-
-		// Build global bounds (virtual px + draft offsets) so all peers fit proportionally
-		var bounds = peers.Select(p =>
-		{
-			var off = GetOrCreateOffsets(p.PeerId);
-			var ox = off.dx;
-			var oy = off.dy;
-
-			var x1 = p.X + ox;
-			var y1 = p.Y + oy;
-			var x2 = x1 + p.Width;
-			var y2 = y1 + p.Height;
-			return (p.PeerId, x1, y1, x2, y2);
-		}).ToList();
-
-		var minX = bounds.Min(b => b.x1);
-		var minY = bounds.Min(b => b.y1);
-		var maxX = bounds.Max(b => b.x2);
-		var maxY = bounds.Max(b => b.y2);
-
+		// Global virtual bounds
+		var minX = vTiles.Min(t => t.vx);
+		var minY = vTiles.Min(t => t.vy);
+		var maxX = vTiles.Max(t => t.vx + t.vw);
+		var maxY = vTiles.Max(t => t.vy + t.vh);
 		var totalW = Math.Max(1.0, maxX - minX);
 		var totalH = Math.Max(1.0, maxY - minY);
 
-		const double pad = 14;
-
+		// Scale to fit canvas
+		const double pad = 24;
 		var usableW = Math.Max(1.0, CanvasWidth - 2 * pad);
 		var usableH = Math.Max(1.0, CanvasHeight - 2 * pad);
-
 		var scale = Math.Min(usableW / totalW, usableH / totalH);
-		scale = Math.Min(scale, 1.0);
-		scale = Math.Max(scale, 0.03);
+		scale = Math.Max(0.02, Math.Min(scale, 0.5));
 
 		var normW = totalW * scale;
 		var normH = totalH * scale;
-
 		var baseX = (CanvasWidth - normW) / 2.0;
 		var baseY = (CanvasHeight - normH) / 2.0;
 
-		// Persist normalization params for drag conversion
-		_lastMinX = minX;
-		_lastMinY = minY;
+		_lastMinX = minX; _lastMinY = minY;
 		_lastScale = scale;
-		_lastBaseX = baseX;
-		_lastBaseY = baseY;
+		_lastBaseX = baseX; _lastBaseY = baseY;
 
-		foreach (var p in peers.OrderBy(p => p.PeerId))
+		// Build tile VMs
+		var newTiles = vTiles.Select(t => new DisplayTileVm(
+			t.peerId, t.peerName, t.dispNum, t.isLocal, t.isPrimary, t.stableId,
+			t.vx, t.vy, t.vw, t.vh)
 		{
-			var off = GetOrCreateOffsets(p.PeerId);
+			Nx = baseX + (t.vx - minX) * scale,
+			Ny = baseY + (t.vy - minY) * scale,
+			Nw = Math.Max(32, t.vw * scale),
+			Nh = Math.Max(20, t.vh * scale),
+			IsActiveTarget = t.peerId == _routing.ActiveTargetPeerId
+		}).ToList();
 
-			var x = (p.X + off.dx) - minX;
-			var y = (p.Y + off.dy) - minY;
+		// Build peer group VMs
+		var newGroups = vTiles.GroupBy(t => t.peerId).Select(g =>
+		{
+			var first = g.First();
+			var gMinX = g.Min(t => t.vx);
+			var gMinY = g.Min(t => t.vy);
+			var gMaxX = g.Max(t => t.vx + t.vw);
+			var gMaxY = g.Max(t => t.vy + t.vh);
 
-			var nx = baseX + x * scale;
-			var ny = baseY + y * scale;
-			var nw = Math.Max(18, p.Width * scale);
-			var nh = Math.Max(18, p.Height * scale);
-			var peerName = string.IsNullOrEmpty(p.DeviceName) ? p.PeerId : p.DeviceName;
-			var normalized = BuildDesktopNormalized(p.PeerId, peerName, p);
+			var gNx = baseX + (gMinX - minX) * scale;
+			var gNy = baseY + (gMinY - minY) * scale;
+			var gNw = Math.Max(60, (gMaxX - gMinX) * scale);
+			var gNh = (gMaxY - gMinY) * scale;
 
-			PeerBlocks.Add(new PeerBlockVm(
-				peerId: p.PeerId,
-				peerName: peerName,
-				normalized: normalized,
-				nx: nx,
-				ny: ny,
-				nw: nw,
-				nh: nh
-			));
+			return new PeerGroupVm(first.peerId, first.peerName, first.isLocal)
+			{
+				LabelX = gNx,
+				LabelY = gNy + gNh + 5,
+				LabelWidth = gNw,
+				IsActiveTarget = first.peerId == _routing.ActiveTargetPeerId
+			};
+		}).ToList();
 
-		}
+		DisplayTiles.Clear();
+		foreach (var t in newTiles) DisplayTiles.Add(t);
+		PeerGroups.Clear();
+		foreach (var g in newGroups) PeerGroups.Add(g);
 
-		// Set initial active target state
-		foreach (var b in PeerBlocks)
-			b.IsActiveTarget = b.PeerId == _routing.ActiveTargetPeerId;
-		var activeName = PeerBlocks.FirstOrDefault(b => b.IsActiveTarget)?.PeerName ?? "Local";
+		var activeName = PeerGroups.FirstOrDefault(g => g.IsActiveTarget)?.PeerName ?? "Local";
 		ActiveTargetName = $"Routing to: {activeName}";
 
 		RefreshDirtyState();
 	}
 
-
-	private static NormalizedCluster BuildDesktopNormalized(string peerId, string peerName, PeerRect r)
-	{
-		// Minimal: represent the peer as one big "desktop" display.
-		var snap = new DisplaySnapshot(
-			StableId: "desktop",
-			DisplayNumber: 1,
-			IsPrimary: true,
-			X: (int)r.X,
-			Y: (int)r.Y,
-			Width: (int)r.Width,
-			Height: (int)r.Height,
-			RotationDegrees: 0,
-			DpiX: 96,
-			DpiY: 96
-		);
-
-		var cluster = new PeerDisplayCluster(peerId, peerName, new[] { snap });
-		return DisplayLayoutNormalizer.Normalize(cluster, maxWidth: 240, maxHeight: 130, padding: 8);
-	}
-
-	// ---------------- Drag ----------------
+	// ---- Drag ----
 
 	public void BeginDrag(string peerId, double mouseX, double mouseY)
 	{
+		if (peerId == _localPeerId) return;
 		IsDragging = true;
 		_dragPeerId = peerId;
 		_dragStartMouseX = mouseX;
 		_dragStartMouseY = mouseY;
+		_dragScale = Math.Max(0.0001, _lastScale);
 
-		var v = GetOrCreateOffsets(peerId);
-		_dragStartDraftX = v.dx;
-		_dragStartDraftY = v.dy;
+		var pos = _positions.TryGetValue(peerId, out var v) ? v : default;
+		_dragStartDraftX = pos.dx;
+		_dragStartDraftY = pos.dy;
 	}
 
 	public void DragTo(double mouseX, double mouseY)
 	{
-		if (!IsDragging || string.IsNullOrWhiteSpace(_dragPeerId))
-			return;
+		if (!IsDragging || string.IsNullOrWhiteSpace(_dragPeerId)) return;
 
-		if (!_peerRects.TryGetValue(_dragPeerId, out var peerRect))
-			return;
-
-		// Convert canvas delta -> virtual delta using the last computed scale.
-		// (This fixes the "drag feels wrong" issue and keeps offsets in real pixels.)
 		var dxCanvas = mouseX - _dragStartMouseX;
 		var dyCanvas = mouseY - _dragStartMouseY;
+		var newDraftX = _dragStartDraftX + dxCanvas / _dragScale;
+		var newDraftY = _dragStartDraftY + dyCanvas / _dragScale;
 
-		var s = Math.Max(0.0001, _lastScale);
-		var dxVirtual = dxCanvas / s;
-		var dyVirtual = dyCanvas / s;
+		if (_positions.TryGetValue(_dragPeerId, out var cur))
+			_positions[_dragPeerId] = (cur.ax, cur.ay, newDraftX, newDraftY);
+		else
+			_positions[_dragPeerId] = (newDraftX, newDraftY, newDraftX, newDraftY);
 
-		var proposedDraftX = _dragStartDraftX + dxVirtual;
-		var proposedDraftY = _dragStartDraftY + dyVirtual;
-
-		// Compute proposed canvas position for this peer (top-left)
-		var proposedNx = VirtualToCanvasX(peerRect.X + proposedDraftX);
-		var proposedNy = VirtualToCanvasY(peerRect.Y + proposedDraftY);
-
-		// Non-overlap resolution in canvas-space (stable + matches what user sees)
-		(var resolvedNx, var resolvedNy) = ResolveNoOverlapCanvas(_dragPeerId, proposedNx, proposedNy);
-
-		// Convert resolved canvas pos back to virtual draft offsets
-		var resolvedVirtualX = CanvasToVirtualX(resolvedNx);
-		var resolvedVirtualY = CanvasToVirtualY(resolvedNy);
-
-		var finalDraftX = resolvedVirtualX - peerRect.X;
-		var finalDraftY = resolvedVirtualY - peerRect.Y;
-
-		SetDraft(_dragPeerId, finalDraftX, finalDraftY);
-
-		// Re-render with new draft offsets
-		RefreshFromSnapshot(_layout.Current);
+		RefreshLayout(_layout.Current);
 	}
 
 	public void EndDrag()
@@ -347,85 +275,45 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 		_dragPeerId = null;
 	}
 
-	private double VirtualToCanvasX(double virtualX)
-		=> _lastBaseX + (virtualX - _lastMinX) * _lastScale;
+	// ---- Commands ----
 
-	private double VirtualToCanvasY(double virtualY)
-		=> _lastBaseY + (virtualY - _lastMinY) * _lastScale;
-
-	private double CanvasToVirtualX(double canvasX)
-		=> ((canvasX - _lastBaseX) / Math.Max(0.0001, _lastScale)) + _lastMinX;
-
-	private double CanvasToVirtualY(double canvasY)
-		=> ((canvasY - _lastBaseY) / Math.Max(0.0001, _lastScale)) + _lastMinY;
-
-	private (double x, double y) ResolveNoOverlapCanvas(string movingPeerId, double proposedNx, double proposedNy)
+	private void RefreshDirtyState()
 	{
-		// Find moving block size (from current rendered blocks)
-		var movingVm = PeerBlocks.FirstOrDefault(p => p.PeerId == movingPeerId);
-		if (movingVm is null)
-			return (proposedNx, proposedNy);
-
-		var x = proposedNx;
-		var y = proposedNy;
-
-		for (int iter = 0; iter < ResolveMaxIterations; iter++)
-		{
-			var me = new RectD(x, y, movingVm.Nw, movingVm.Nh);
-			bool adjusted = false;
-
-			foreach (var other in PeerBlocks)
-			{
-				if (other.PeerId == movingPeerId) continue;
-
-				// Inflate other by padding to keep a gap
-				var otherRect = new RectD(
-					other.Nx - PeerPadding,
-					other.Ny - PeerPadding,
-					other.Nw + PeerPadding * 2,
-					other.Nh + PeerPadding * 2);
-
-				if (!Intersects(me, otherRect))
-					continue;
-
-				var (ox, oy) = Overlap(me, otherRect);
-				if (ox <= 0 || oy <= 0)
-					continue;
-
-				// Push out along smaller overlap axis
-				if (ox < oy)
-					x += me.Left < otherRect.Left ? -ox : ox;
-				else
-					y += me.Top < otherRect.Top ? -oy : oy;
-
-				adjusted = true;
-				break; // re-evaluate after first collision resolution
-			}
-
-			if (!adjusted)
-				break;
-		}
-
-		return (x, y);
+		IsDirty = _positions.Values.Any(v =>
+			Math.Abs(v.dx - v.ax) > 0.5 ||
+			Math.Abs(v.dy - v.ay) > 0.5);
+		ApplyCommand.NotifyCanExecuteChanged();
+		RevertCommand.NotifyCanExecuteChanged();
 	}
-
-	// ---------------- Commands ----------------
 
 	[RelayCommand(CanExecute = nameof(CanApply))]
 	private void Apply()
 	{
-		foreach (var (peerId, v) in _offsets.ToList())
+		foreach (var (peerId, v) in _positions.ToList())
 		{
-			_offsets[peerId] = (v.dx, v.dy, v.dx, v.dy);
+			_positions[peerId] = (v.dx, v.dy, v.dx, v.dy);
 
-			if (!_persisted.Peers.TryGetValue(peerId, out var peer))
+			if (!_persisted.Peers.TryGetValue(peerId, out var peerState))
 			{
-				peer = new PeerLayoutState();
-				_persisted.Peers[peerId] = peer;
+				peerState = new PeerLayoutState();
+				_persisted.Peers[peerId] = peerState;
 			}
+			peerState.AppliedOffsetX = v.dx;
+			peerState.AppliedOffsetY = v.dy;
+			peerState.HasSavedPosition = true;
 
-			peer.AppliedOffsetX = v.dx;
-			peer.AppliedOffsetY = v.dy;
+			// Update routing engine so auto-switch works immediately
+			if (peerId != _localPeerId && _rawRects.TryGetValue(peerId, out var rawRect))
+			{
+				_layout.UpsertPeerRect(new PeerRect(
+					PeerId: peerId,
+					DeviceName: rawRect.DeviceName,
+					X: v.dx,
+					Y: v.dy,
+					Width: rawRect.Width,
+					Height: rawRect.Height
+				));
+			}
 		}
 
 		_layoutStore.Save(_persisted);
@@ -437,35 +325,63 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 	[RelayCommand(CanExecute = nameof(CanRevert))]
 	private void Revert()
 	{
-		foreach (var peerId in _offsets.Keys.ToList())
+		foreach (var peerId in _positions.Keys.ToList())
 		{
-			var v = _offsets[peerId];
-			_offsets[peerId] = (v.ax, v.ay, v.ax, v.ay);
+			var v = _positions[peerId];
+			_positions[peerId] = (v.ax, v.ay, v.ax, v.ay);
 		}
-
-		RefreshFromSnapshot(_layout.Current);
+		RefreshLayout(_layout.Current);
 		RefreshDirtyState();
 	}
 
 	private bool CanRevert() => IsDirty;
 }
 
-public sealed partial class PeerBlockVm : ObservableObject
+// ---- Tile VM ----
+
+public sealed partial class DisplayTileVm : ObservableObject
 {
 	public string PeerId { get; }
 	public string PeerName { get; }
-	public NormalizedCluster Normalized { get; }
+	public int DisplayNumber { get; }
+	public bool IsLocal { get; }
+	public bool IsPrimary { get; }
+	public string StableId { get; }
+	public double VirtualX { get; }
+	public double VirtualY { get; }
+	public double VirtualW { get; }
+	public double VirtualH { get; }
+
 	[ObservableProperty] private double nx;
 	[ObservableProperty] private double ny;
 	[ObservableProperty] private double nw;
 	[ObservableProperty] private double nh;
 	[ObservableProperty] private bool isActiveTarget;
 
-	public PeerBlockVm(string peerId, string peerName, NormalizedCluster normalized, double nx, double ny, double nw, double nh)
+	public DisplayTileVm(string peerId, string peerName, int displayNumber, bool isLocal, bool isPrimary,
+		string stableId, double virtualX, double virtualY, double virtualW, double virtualH)
 	{
-		PeerId = peerId;
-		PeerName = peerName;
-		Normalized = normalized;
-		Nx = nx; Ny = ny; Nw = nw; Nh = nh;
+		PeerId = peerId; PeerName = peerName; DisplayNumber = displayNumber;
+		IsLocal = isLocal; IsPrimary = isPrimary; StableId = stableId;
+		VirtualX = virtualX; VirtualY = virtualY; VirtualW = virtualW; VirtualH = virtualH;
+	}
+}
+
+// ---- Group label VM ----
+
+public sealed partial class PeerGroupVm : ObservableObject
+{
+	public string PeerId { get; }
+	public string PeerName { get; }
+	public bool IsLocal { get; }
+
+	[ObservableProperty] private double labelX;
+	[ObservableProperty] private double labelY;
+	[ObservableProperty] private double labelWidth;
+	[ObservableProperty] private bool isActiveTarget;
+
+	public PeerGroupVm(string peerId, string peerName, bool isLocal)
+	{
+		PeerId = peerId; PeerName = peerName; IsLocal = isLocal;
 	}
 }
