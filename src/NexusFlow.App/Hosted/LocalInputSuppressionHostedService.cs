@@ -5,25 +5,30 @@ using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Input;
 using System;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace NexusFlow.App.Hosted;
 
 /// <summary>
-/// Bridges routing state into local input suppression.
+/// Bridges routing state into WinHookCaptureService.SuppressLocalNonMoveInput.
 ///
-/// Two complementary mechanisms are used together:
+/// When the active target is a remote peer (and failsafe is not blocking),
+/// the WH_MOUSE_LL / WH_KEYBOARD_LL hook callbacks return a non-zero value,
+/// which tells Windows to drop the event and not deliver it to any application.
 ///
-/// 1. BlockInput(TRUE) — Win32 API that prevents input events from reaching ANY
-///    application on the desktop, including UAC-elevated processes.
-///    WH_KEYBOARD_LL and WH_MOUSE_LL hooks still fire during BlockInput, so:
-///      • ICursorTracker / TargetSwitchingEngine still receive mouse-move events.
-///      • GlobalHotkeyListener still receives Shift+Esc → failsafe always works.
+/// Why NOT BlockInput():
+///   BlockInput() works at the raw-input-thread level and prevents WH_MOUSE_LL
+///   and WH_KEYBOARD_LL hooks from firing at all. That means captured events are
+///   never forwarded to the remote peer, and the failsafe (Shift+Esc via
+///   GlobalHotkeyListener's own WH_KEYBOARD_LL) cannot trigger.
 ///
-/// 2. WinHookCaptureService.SuppressLocalNonMoveInput — belt-and-suspenders hook
-///    return value suppression (handles any edge case BlockInput misses).
+/// Why the hook return value is sufficient (now that the process is elevated):
+///   NexusFlow runs as Administrator (app.manifest requireAdministrator). At the
+///   same privilege level as every other process, UIPI cannot block the hook's
+///   return value. Windows respects the non-zero return from WH_MOUSE_LL /
+///   WH_KEYBOARD_LL and drops the event before it reaches any window, regardless
+///   of that window's own elevation.
 ///
 /// Mouse moves always pass through so cursor tracking and boundary detection work.
 /// </summary>
@@ -36,10 +41,6 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
     private readonly IFailsafeService _failsafe;
     private readonly IDiagnosticsLog _log;
     private readonly string _localPeerId;
-
-    // Track whether we currently have BlockInput active so we only
-    // call the Win32 API when the state actually changes.
-    private bool _blockInputActive;
 
     public LocalInputSuppressionHostedService(
         IWinHookCaptureService hook,
@@ -68,7 +69,7 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
     {
         _routing.ActiveTargetChanged -= OnRoutingChanged;
         _failsafe.Changed -= OnFailsafeChanged;
-        ApplySuppression(false);
+        _hook.SuppressLocalNonMoveInput = false;
         _log.Info(Cat, "Service stopped — suppression released.");
         return Task.CompletedTask;
     }
@@ -93,28 +94,6 @@ public sealed class LocalInputSuppressionHostedService : IHostedService
         var shouldSuppress = targetIsRemote && !failsafeBlocked;
 
         _log.Trace(Cat, $"Refresh: target={target[..Math.Min(8, target.Length)]} isRemote={targetIsRemote} failsafe={failsafeBlocked} => suppress={shouldSuppress}");
-        ApplySuppression(shouldSuppress);
+        _hook.SuppressLocalNonMoveInput = shouldSuppress;
     }
-
-    private void ApplySuppression(bool suppress)
-    {
-        // Always update the hook flag first (fast path, no syscall needed).
-        _hook.SuppressLocalNonMoveInput = suppress;
-
-        // Only call BlockInput when the state changes to avoid redundant syscalls.
-        if (suppress == _blockInputActive)
-            return;
-
-        _blockInputActive = suppress;
-        var ok = BlockInput(suppress);
-        _log.Info(Cat, $"BlockInput({suppress}) => {(ok ? "OK" : "FAILED — check process elevation")}");
-    }
-
-    // ── Win32 ──────────────────────────────────────────────────────────────────
-    // BlockInput blocks keyboard and mouse events from reaching applications.
-    // Critically, low-level hooks (WH_KEYBOARD_LL / WH_MOUSE_LL) are NOT
-    // affected — they still fire — so the failsafe hotkey and cursor tracking
-    // continue to work normally while input is blocked.
-    [DllImport("user32.dll")]
-    private static extern bool BlockInput(bool fBlockIt);
 }
