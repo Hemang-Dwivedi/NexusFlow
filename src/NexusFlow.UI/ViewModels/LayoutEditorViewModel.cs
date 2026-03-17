@@ -202,7 +202,15 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         foreach (var k in _pos.Keys.Except(_localKeys).Except(validRemote).ToList())
             _pos.Remove(k);
 
-        // 6. Initialise / update remote tile positions
+        // 6. Initialise / update remote tile positions.
+        //
+        // Canvas position is ALWAYS derived from the virtual rect that comes from
+        // _layout.Current (the authoritative routing state).  This keeps the UI
+        // in sync when a LayoutPositionSyncV1 message arrives from the remote peer.
+        //
+        // Exception: if the user is actively dragging this tile, or has an
+        // uncommitted local change (Dx != Ax), we preserve the in-progress
+        // edit so the drag is not interrupted.
         double remoteAreaW = CanvasWidth  - actualLocalRight - 30;
         double remoteAreaH = CanvasHeight - 20;
 
@@ -216,27 +224,38 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             double rNw = Math.Max(minTileW, rect.Width  * rScale);
             double rNh = Math.Max(minTileH, rect.Height * rScale);
 
+            // Derive the canonical canvas position from the virtual rect.
+            // rect.X / rect.Y come directly from _layout.Current and already
+            // reflect any saved offsets applied by LayoutSyncHostedService.
+            double derivedX = _defaultOriginX + (rect.X - _localMinX) * _localScale;
+            double derivedY = _defaultOriginY + (rect.Y - _localMinY) * _localScale;
+
+            // If the virtual rect has never been repositioned (raw coords from the
+            // remote peer's own desktop origin are effectively 0-based), the
+            // derived canvas X might land on top of the local cluster.  Fall back
+            // to the default "right of cluster" placement in that case.
+            if (derivedX < actualLocalRight - 10)
+                derivedX = actualLocalRight + 20;
+
+            derivedX = Math.Max(0, Math.Min(CanvasWidth  - rNw, derivedX));
+            derivedY = Math.Max(0, Math.Min(CanvasHeight - rNh, derivedY));
+
             if (!_pos.ContainsKey(rect.PeerId))
             {
-                double canvasX, canvasY;
-                if (_persisted.Peers.TryGetValue(rect.PeerId, out var ps) && ps.HasSavedPosition)
-                {
-                    canvasX = _defaultOriginX + (ps.AppliedOffsetX - _localMinX) * _localScale;
-                    canvasY = _defaultOriginY + (ps.AppliedOffsetY - _localMinY) * _localScale;
-                }
-                else
-                {
-                    canvasX = actualLocalRight + 20;
-                    canvasY = _defaultOriginY + (_rowH - rNh) / 2.0;
-                }
-                canvasX = Math.Max(0, Math.Min(CanvasWidth  - rNw, canvasX));
-                canvasY = Math.Max(0, Math.Min(CanvasHeight - rNh, canvasY));
-                _pos[rect.PeerId] = (canvasX, canvasY, canvasX, canvasY, rNw, rNh);
+                _pos[rect.PeerId] = (derivedX, derivedY, derivedX, derivedY, rNw, rNh);
             }
             else
             {
                 var e = _pos[rect.PeerId];
-                _pos[rect.PeerId] = (e.Ax, e.Ay, e.Dx, e.Dy, rNw, rNh);
+                bool pending   = Math.Abs(e.Dx - e.Ax) > 0.5 || Math.Abs(e.Dy - e.Ay) > 0.5;
+                bool dragging  = rect.PeerId == _dragKey;
+
+                if (pending || dragging)
+                    // Local edit in progress — keep draft, only refresh size
+                    _pos[rect.PeerId] = (e.Ax, e.Ay, e.Dx, e.Dy, rNw, rNh);
+                else
+                    // No pending changes — sync canvas position from routing state
+                    _pos[rect.PeerId] = (derivedX, derivedY, derivedX, derivedY, rNw, rNh);
             }
         }
 
