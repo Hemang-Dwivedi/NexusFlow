@@ -10,5 +10,6 @@ public sealed record PeerRectSyncV1(
 	int MinX,
 	int MinY,
 	int Width,
-	int Height
+	int Height,
+	string DeviceName = ""
 );

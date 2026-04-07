@@ -146,7 +146,7 @@ public sealed class PairingSession
 	);
 	public async Task<PairingDecision> WaitDecisionAsync(CancellationToken ct)
 	{
-		var bytes = await Framing.ReadFrameAsync(Stream, ct);
+		var (_, bytes) = await FramingV2.ReadAsync(Stream, ct);
 		return PairingCodec.Decode<PairingDecision>(bytes) ?? throw new InvalidOperationException("Invalid decision.");
 	}
 

@@ -1,6 +1,6 @@
 ﻿namespace NexusFlow.Core.Layout;
 
-public sealed record PeerRect(string PeerId, double X, double Y, double Width, double Height)
+public sealed record PeerRect(string PeerId, double X, double Y, double Width, double Height, string DeviceName = "")
 {
 	public bool Contains(double px, double py)
 		=> px >= X && px < X + Width && py >= Y && py < Y + Height;

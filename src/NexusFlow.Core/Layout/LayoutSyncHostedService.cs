@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Hosting;
 using NexusFlow.Core.Control;
 using NexusFlow.Core.Services;
+using NexusFlow.Identity;
 using NexusFlow.Protocol.Control;
 using System;
 using System.Linq;
@@ -22,15 +23,18 @@ public sealed class LayoutSyncHostedService : IHostedService
 	private readonly ConnectionManager _connections;
 	private readonly DisplayService _displayService;
 	private readonly ILayoutState _layout;
+	private readonly ILocalIdentity _me;
 
 	public LayoutSyncHostedService(
 		ConnectionManager connections,
 		DisplayService displayService,
-		ILayoutState layout)
+		ILayoutState layout,
+		ILocalIdentity me)
 	{
 		_connections = connections;
 		_displayService = displayService;
 		_layout = layout;
+		_me = me;
 	}
 
 	public Task StartAsync(CancellationToken cancellationToken)
@@ -66,7 +70,8 @@ public sealed class LayoutSyncHostedService : IHostedService
 					MinX: (int)mine.X,
 					MinY: (int)mine.Y,
 					Width: (int)mine.Width,
-					Height: (int)mine.Height
+					Height: (int)mine.Height,
+					DeviceName: mine.DeviceName
 				);
 
 				await _connections.SendToPeerAsync(peer.PeerId, msg, CancellationToken.None)
@@ -99,7 +104,8 @@ public sealed class LayoutSyncHostedService : IHostedService
 				X: msg.MinX,
 				Y: msg.MinY,
 				Width: msg.Width,
-				Height: msg.Height
+				Height: msg.Height,
+				DeviceName: msg.DeviceName
 			));
 		}
 		catch
@@ -113,19 +119,20 @@ public sealed class LayoutSyncHostedService : IHostedService
 		var cluster = _displayService.GetLocalCluster();
 
 		if (cluster.Displays.Count == 0)
-			return new PeerRect(cluster.PeerId, 0, 0, 0, 0);
+			return new PeerRect(_me.PeerId, 0, 0, 0, 0, _me.DeviceName);
 
 		var minX = cluster.Displays.Min(d => d.X);
 		var minY = cluster.Displays.Min(d => d.Y);
 		var maxX = cluster.Displays.Max(d => d.X + d.Width);
 		var maxY = cluster.Displays.Max(d => d.Y + d.Height);
-		
+
 		return new PeerRect(
-			PeerId: cluster.PeerId,
+			PeerId: _me.PeerId,
 			X: minX,
 			Y: minY,
 			Width: maxX - minX,
-			Height: maxY - minY
+			Height: maxY - minY,
+			DeviceName: _me.DeviceName
 		);
 	}
 }
