@@ -248,9 +248,28 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			var msg = (MouseMessage)wParam;
 			var ms = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
 
-			// Never capture NexusFlow-injected events — always pass them through
+			// NexusFlow-injected events: track cursor position so TargetSwitchingEngine
+			// on the receiving machine can detect when the injected cursor crosses a screen
+			// edge and trigger a switch-back. Never capture or route injected events.
 			if (ms.dwExtraInfo == InjectedEventMarker.Magic)
+			{
+				if (msg == MouseMessage.WM_MOUSEMOVE)
+				{
+					var ix = ms.pt.x;
+					var iy = ms.pt.y;
+					if (_hasLast)
+					{
+						var idx = ix - _lastX;
+						var idy = iy - _lastY;
+						if (idx != 0 || idy != 0)
+							MouseMove?.Invoke(new CapturedMouseMoveEvent(
+								Dx: idx, Dy: idy, X: ix, Y: iy,
+								TimestampUtcTicks: DateTime.UtcNow.Ticks));
+					}
+					_lastX = ix; _lastY = iy; _hasLast = true;
+				}
 				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+			}
 
 			// Decide once for this entire event — avoids invoking the delegate twice.
 			var routeToRemote = _shouldRouteToRemote?.Invoke() ?? false;

@@ -197,6 +197,15 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             .Select(k => _pos[k].Dx + _pos[k].Nw)
             .DefaultIfEmpty(defaultLocalRight).Max();
 
+        // Actual LEFT edge of local cluster on canvas (anchor for relative remote placement)
+        double localCanvasLeft = _localKeys.Where(_pos.ContainsKey)
+            .Select(k => _pos[k].Dx)
+            .DefaultIfEmpty(_defaultOriginX).Min();
+
+        // Virtual extents of the local cluster (used to detect unpositioned remote peers)
+        double localVirtMaxX = sorted.Max(d => (double)(d.X + d.Width));
+        double localVirtMaxY = sorted.Max(d => (double)(d.Y + d.Height));
+
         // 5. Prune stale remote keys from _pos
         var validRemote = _rawRects.Keys.ToHashSet();
         foreach (var k in _pos.Keys.Except(_localKeys).Except(validRemote).ToList())
@@ -204,13 +213,15 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
         // 6. Initialise / update remote tile positions.
         //
-        // Canvas position is ALWAYS derived from the virtual rect that comes from
-        // _layout.Current (the authoritative routing state).  This keeps the UI
-        // in sync when a LayoutPositionSyncV1 message arrives from the remote peer.
+        // Canvas position is derived RELATIVE to where the local cluster sits on
+        // canvas — so the layout is correct regardless of canvas size or resolution.
         //
-        // Exception: if the user is actively dragging this tile, or has an
-        // uncommitted local change (Dx != Ax), we preserve the in-progress
-        // edit so the drag is not interrupted.
+        // Exception: peers whose virtual rect still overlaps the local cluster have
+        // not been positioned yet (both start at 0,0). Those get a default placement
+        // to the right so tiles never stack on top of each other at startup.
+        //
+        // If the user is actively dragging a tile or has an uncommitted local change
+        // (Dx != Ax), the in-progress edit is preserved so the drag is not interrupted.
         double remoteAreaW = CanvasWidth  - actualLocalRight - 30;
         double remoteAreaH = CanvasHeight - 20;
 
@@ -224,18 +235,17 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             double rNw = Math.Max(minTileW, rect.Width  * rScale);
             double rNh = Math.Max(minTileH, rect.Height * rScale);
 
-            // Derive the canonical canvas position from the virtual rect.
-            // rect.X / rect.Y come directly from _layout.Current and already
-            // reflect any saved offsets applied by LayoutSyncHostedService.
-            double derivedX = _defaultOriginX + (rect.X - _localMinX) * _localScale;
-            double derivedY = _defaultOriginY + (rect.Y - _localMinY) * _localScale;
+            // Relative canvas position: offset from the local cluster's actual canvas
+            // left by the virtual offset between remote and local.
+            double derivedX = localCanvasLeft + (rect.X - _localMinX) * _localScale;
+            double derivedY = _defaultOriginY  + (rect.Y - _localMinY) * _localScale;
 
-            // If the derived canvas position overlaps the local cluster (e.g. because
-            // the remote peer's raw virtual origin is 0,0 just like the local one),
-            // fall back to placing it right of the cluster so tiles never overlap.
-            // Once the user drags + Applies, virtualX shifts outward and this
-            // fallback no longer triggers.
-            if (derivedX < actualLocalRight - 10)
+            // Only fall back to right-of-local placement for unpositioned peers —
+            // those whose virtual rect overlaps the local cluster (not yet arranged).
+            bool isUnpositioned =
+                rect.X < localVirtMaxX && rect.X + rect.Width  > _localMinX &&
+                rect.Y < localVirtMaxY && rect.Y + rect.Height > _localMinY;
+            if (isUnpositioned)
                 derivedX = actualLocalRight + 20;
 
             derivedX = Math.Max(0, Math.Min(CanvasWidth  - rNw, derivedX));
