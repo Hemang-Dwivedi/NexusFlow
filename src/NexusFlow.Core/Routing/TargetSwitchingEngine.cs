@@ -101,6 +101,11 @@ public sealed class TargetSwitchingEngine : IDisposable
 
 		Volatile.Write(ref _lastSwitchTicks, ticks);
 
+		// Snap cursor to the exact edge pixel before the hook freezes it.
+		// Without this the cursor stops wherever the OS last placed it,
+		// which may be a few pixels past the boundary — off the physical screen.
+		SnapCursorToEdge(local, exitAxis, dx, dy);
+
 		// Distributed stamped target switch
 		_ = _routing.RequestSetActiveTargetAsync(targetPeerId);
 
@@ -127,6 +132,29 @@ public sealed class TargetSwitchingEngine : IDisposable
 	}
 
 	private enum Axis { Horizontal, Vertical }
+
+	private static void SnapCursorToEdge(PeerRect local, Axis axis, int dx, int dy)
+	{
+		try
+		{
+			int ex, ey;
+			if (axis == Axis.Horizontal)
+			{
+				ex = dx > 0 ? (int)(local.X + local.Width  - 1) : (int)local.X;
+				ey = (int)(local.Y + local.Height / 2);
+			}
+			else
+			{
+				ex = (int)(local.X + local.Width / 2);
+				ey = dy > 0 ? (int)(local.Y + local.Height - 1) : (int)local.Y;
+			}
+			SetCursorPos(ex, ey);
+		}
+		catch { }
+	}
+
+	[System.Runtime.InteropServices.DllImport("user32.dll")]
+	private static extern bool SetCursorPos(int X, int Y);
 
 	public void Dispose()
 	{

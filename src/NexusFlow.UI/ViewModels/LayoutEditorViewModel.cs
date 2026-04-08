@@ -230,11 +230,12 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             double derivedX = _defaultOriginX + (rect.X - _localMinX) * _localScale;
             double derivedY = _defaultOriginY + (rect.Y - _localMinY) * _localScale;
 
-            // If the virtual rect has never been repositioned (raw coords from the
-            // remote peer's own desktop origin are effectively 0-based), the
-            // derived canvas X might land on top of the local cluster.  Fall back
-            // to the default "right of cluster" placement in that case.
-            if (derivedX < actualLocalRight - 10)
+            // Only fall back to "right of cluster" if this peer has never been
+            // explicitly positioned (no saved position and coords overlap local).
+            // If a LayoutPositionSyncV1 placed the peer to the left (derivedX < 0),
+            // honour that — clamping to canvas bounds below keeps it visible.
+            var hasSaved = _persisted.Peers.TryGetValue(rect.PeerId, out var ps) && ps.HasSavedPosition;
+            if (!hasSaved && derivedX < actualLocalRight - 10)
                 derivedX = actualLocalRight + 20;
 
             derivedX = Math.Max(0, Math.Min(CanvasWidth  - rNw, derivedX));
