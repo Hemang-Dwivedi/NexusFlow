@@ -148,24 +148,42 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
         var sorted = localCluster.Displays.OrderBy(d => d.X).ThenBy(d => d.Y).ToList();
 
-        const double maxRowH  = 240.0;
-        const double maxRowW  = 440.0;
         const double tileGap  = 10.0;
         const double minTileW = 80.0;
         const double minTileH = 52.0;
+        const double padding  = 24.0;
 
-        double totalVW  = sorted.Sum(d => (double)d.Width);
-        double maxVH    = sorted.Max(d => (double)d.Height);
-        double scaleH   = maxRowH / maxVH;
-        double gapTotal = tileGap * Math.Max(0, sorted.Count - 1);
-        double scaleW   = (maxRowW - gapTotal) / totalVW;
-        _localScale = Math.Max(0.01, Math.Min(scaleH, scaleW));
-        _rowH = maxVH * _localScale;
-
-        // Virtual extents of the local cluster (needed early for positioning logic)
+        // Virtual extents of the local cluster
         double localVirtMaxX = sorted.Max(d => (double)(d.X + d.Width));
         double localVirtMaxY = sorted.Max(d => (double)(d.Y + d.Height));
         double localVirtW    = localVirtMaxX - _localMinX;
+        double localVirtH    = localVirtMaxY - _localMinY;
+
+        // Full virtual extent including all remote peers (for scale-to-fit-all).
+        // Unpositioned peers (still at 0,0) are assumed adjacent to the local right edge.
+        double fullVirtMinX = _localMinX, fullVirtMaxX = localVirtMaxX;
+        double fullVirtMinY = _localMinY, fullVirtMaxY = localVirtMaxY;
+        foreach (var r in _rawRects.Values)
+        {
+            bool unpos = r.X < localVirtMaxX && r.X + r.Width  > _localMinX &&
+                         r.Y < localVirtMaxY && r.Y + r.Height > _localMinY;
+            if (unpos)
+                fullVirtMaxX = Math.Max(fullVirtMaxX, localVirtMaxX + r.Width);
+            else
+            {
+                fullVirtMinX = Math.Min(fullVirtMinX, r.X);
+                fullVirtMaxX = Math.Max(fullVirtMaxX, r.X + r.Width);
+                fullVirtMinY = Math.Min(fullVirtMinY, r.Y);
+                fullVirtMaxY = Math.Max(fullVirtMaxY, r.Y + r.Height);
+            }
+        }
+
+        // Compute _localScale to fit ALL clusters inside the canvas at once
+        double localGapTotal = tileGap * Math.Max(0, sorted.Count - 1);
+        double scaleW = (CanvasWidth  - 2 * padding - localGapTotal) / Math.Max(1, fullVirtMaxX - fullVirtMinX);
+        double scaleH = (CanvasHeight - 2 * padding) / Math.Max(1, fullVirtMaxY - fullVirtMinY);
+        _localScale = Math.Max(0.01, Math.Min(scaleW, scaleH));
+        _rowH = localVirtH * _localScale;
 
         // Compute _defaultOriginX: the canvas X where virtual offset 0 (local left edge) lives.
         //
@@ -177,7 +195,6 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         //
         // Algorithm: find the min/max signed virtual offsets of all positioned remote peers,
         // then pick _defaultOriginX so the whole arrangement is centred and has padding >= 24px.
-        const double padding = 24.0;
         double minVirtOff = 0.0;        // local left = offset 0
         double maxVirtOff = localVirtW; // local right edge
 
@@ -187,7 +204,12 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             // "Unpositioned" = virtual rect overlaps local (both peers start at 0,0 — not yet arranged)
             bool isUnpos = r.X < localVirtMaxX && r.X + r.Width > _localMinX &&
                            r.Y < localVirtMaxY && r.Y + r.Height > _localMinY;
-            if (isUnpos) continue;
+            if (isUnpos)
+            {
+                // Treat as adjacent to local right for centering purposes
+                maxVirtOff = Math.Max(maxVirtOff, localVirtW + r.Width);
+                continue;
+            }
 
             double leftOff  = r.X - _localMinX;
             double rightOff = leftOff + r.Width;
@@ -281,7 +303,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
                 rect.X < localVirtMaxX && rect.X + rect.Width  > _localMinX &&
                 rect.Y < localVirtMaxY && rect.Y + rect.Height > _localMinY;
             if (isUnpositioned)
-                derivedX = actualLocalRight + 20;
+                derivedX = actualLocalRight;
 
             if (!_pos.ContainsKey(rect.PeerId))
             {
