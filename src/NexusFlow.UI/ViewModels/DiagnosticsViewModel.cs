@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using NexusFlow.Core.Input;
 using NexusFlow.UI.Services;
 using NexusFlow.Core.Control;
-
 namespace NexusFlow.UI.ViewModels;
 
 public sealed partial class DiagnosticsViewModel : ObservableObject
@@ -42,11 +41,19 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 		ActiveTargetPeerId = _routing.ActiveTargetPeerId;
 		ActiveSourcePeerId = _routing.ActiveSourcePeerId;
 
-		_routing.ActiveTargetChanged += (_, id) => ActiveTargetPeerId = id;
+		_routing.ActiveTargetChanged += (_, id) =>
+		{
+			ActiveTargetPeerId = id;
+			Dispatcher.UIThread.Post(RefreshSuppressionState);
+		};
 		_routing.ActiveSourceChanged += (_, id) => ActiveSourcePeerId = id;
 
 		IsFailsafeBlocked = _failsafe.IsBlocked;
-		_failsafe.Changed += b => Dispatcher.UIThread.Post(() => IsFailsafeBlocked = b);
+		_failsafe.Changed += b => Dispatcher.UIThread.Post(() =>
+		{
+			IsFailsafeBlocked = b;
+			RefreshSuppressionState();
+		});
 
 		// seed logs
 		foreach (var e in _log.Snapshot())
@@ -66,6 +73,7 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 	[ObservableProperty] private string _activeSourcePeerId = "";
 
 	[ObservableProperty] private bool _isFailsafeBlocked;
+	[ObservableProperty] private bool _isLocalInputSuppressed;
 
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedTargetItem;
 	[ObservableProperty] private (string PeerId, string DisplayName)? _selectedSourceItem;
@@ -130,6 +138,11 @@ public sealed partial class DiagnosticsViewModel : ObservableObject
 
 	[RelayCommand]
 	private void ToggleFailsafe() => _failsafe.Toggle();
+
+	// Suppression is active when routing target is a remote peer and failsafe is off.
+	// The hook reads this same logic live at every event via ShouldRouteToRemote.
+	private void RefreshSuppressionState()
+		=> IsLocalInputSuppressed = _routing.ActiveTargetPeerId != Peers.LocalPeerId && !_failsafe.IsBlocked;
 
 	private (string PeerId, string DisplayName)? FindByPeerId(string peerId)
 	{

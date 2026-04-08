@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
@@ -17,6 +17,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\NexusFlow.Core\NexusFlow.Core.csproj" />
+    <ProjectReference Include="..\..\src\NexusFlow.Identity\NexusFlow.Identity.csproj" />
+    <ProjectReference Include="..\..\src\NexusFlow.Input\NexusFlow.Input.csproj" />
     <ProjectReference Include="..\..\src\NexusFlow.Diagnostics\NexusFlow.Diagnostics.csproj" />
     <ProjectReference Include="..\..\src\NexusFlow.Protocol\NexusFlow.Protocol.csproj" />
     <ProjectReference Include="..\..\src\NexusFlow.Routing\NexusFlow.Routing.csproj" />

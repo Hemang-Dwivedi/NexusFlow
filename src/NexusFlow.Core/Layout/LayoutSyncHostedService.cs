@@ -1,8 +1,9 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using NexusFlow.Core.Control;
 using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Protocol.Control;
+using NexusFlow.Settings.Layout;
 using System;
 using System.Linq;
 using System.Threading;
@@ -23,18 +24,21 @@ public sealed class LayoutSyncHostedService : IHostedService
 	private readonly ConnectionManager _connections;
 	private readonly DisplayService _displayService;
 	private readonly ILayoutState _layout;
-	private readonly ILocalIdentity _me;
+	private readonly ILayoutStore _layoutStore;
+	private readonly ILocalIdentity _localIdentity;
 
 	public LayoutSyncHostedService(
 		ConnectionManager connections,
 		DisplayService displayService,
 		ILayoutState layout,
-		ILocalIdentity me)
+		ILayoutStore layoutStore,
+		ILocalIdentity localIdentity)
 	{
 		_connections = connections;
 		_displayService = displayService;
 		_layout = layout;
-		_me = me;
+		_layoutStore = layoutStore;
+		_localIdentity = localIdentity;
 	}
 
 	public Task StartAsync(CancellationToken cancellationToken)
@@ -59,28 +63,44 @@ public sealed class LayoutSyncHostedService : IHostedService
 
 	private void OnPeerConnected(ConnectedPeer peer)
 	{
-		// Send my rect to the newly connected peer (best-effort)
+		// Send my rect + any saved layout position to the newly connected peer (best-effort)
 		_ = Task.Run(async () =>
 		{
 			try
 			{
 				var mine = BuildLocalPeerRect();
-				var msg = new PeerRectSyncV1(
-					PeerId: mine.PeerId,
-					MinX: (int)mine.X,
-					MinY: (int)mine.Y,
-					Width: (int)mine.Width,
-					Height: (int)mine.Height,
-					DeviceName: mine.DeviceName
-				);
 
-				await _connections.SendToPeerAsync(peer.PeerId, msg, CancellationToken.None)
-					.ConfigureAwait(false);
+				// 1. Always send our raw desktop rect
+				await _connections.SendToPeerAsync(peer.PeerId, new PeerRectSyncV1(
+					PeerId:     mine.PeerId,
+					DeviceName: mine.DeviceName,
+					MinX:       (int)mine.X,
+					MinY:       (int)mine.Y,
+					Width:      (int)mine.Width,
+					Height:     (int)mine.Height
+				), CancellationToken.None).ConfigureAwait(false);
+
+				// 2. If we have a saved layout position for this peer, re-send it so
+				//    the remote peer can immediately reconstruct the correct routing
+				//    state without the user having to click Apply again.
+				var saved = _layoutStore.Load();
+				if (saved.Peers.TryGetValue(peer.PeerId, out var peerState) && peerState.HasSavedPosition)
+				{
+					double relDx = peerState.AppliedOffsetX - mine.X;
+					double relDy = peerState.AppliedOffsetY - mine.Y;
+
+					await _connections.SendToPeerAsync(peer.PeerId, new LayoutPositionSyncV1(
+						ByPeerId:  _localIdentity.PeerId,
+						ForPeerId: peer.PeerId,
+						RelDx:     relDx,
+						RelDy:     relDy
+					), CancellationToken.None).ConfigureAwait(false);
+				}
 			}
 			catch { }
 		});
 
-		// Ensure local stays present
+		// Ensure local stays present in routing state
 		_layout.UpsertPeerRect(BuildLocalPeerRect());
 	}
 
@@ -94,19 +114,60 @@ public sealed class LayoutSyncHostedService : IHostedService
 		try
 		{
 			var type = ControlCodec.PeekType(payload);
-			if (type != nameof(PeerRectSyncV1))
-				return;
 
-			var msg = ControlCodec.Decode<PeerRectSyncV1>(payload)!;
+			if (type == nameof(PeerRectSyncV1))
+			{
+				var msg = ControlCodec.Decode<PeerRectSyncV1>(payload)!;
+				var raw = new PeerRect(
+					PeerId: msg.PeerId,
+					DeviceName: msg.DeviceName,
+					X: msg.MinX,
+					Y: msg.MinY,
+					Width: msg.Width,
+					Height: msg.Height
+				);
+				var saved = _layoutStore.Load();
+				if (saved.Peers.TryGetValue(msg.PeerId, out var peerState) && peerState.HasSavedPosition)
+					_layout.UpsertPeerRect(raw with { X = peerState.AppliedOffsetX, Y = peerState.AppliedOffsetY });
+				else
+					_layout.UpsertPeerRect(raw);
+			}
+			else if (type == nameof(LayoutPositionSyncV1))
+			{
+				var msg = ControlCodec.Decode<LayoutPositionSyncV1>(payload)!;
 
-			_layout.UpsertPeerRect(new PeerRect(
-				PeerId: msg.PeerId,
-				X: msg.MinX,
-				Y: msg.MinY,
-				Width: msg.Width,
-				Height: msg.Height,
-				DeviceName: msg.DeviceName
-			));
+				// Only care if we are the peer being positioned
+				if (msg.ForPeerId != _localIdentity.PeerId) return;
+
+				// Find ByPeerId's existing rect (for Width/Height)
+				var existing = _layout.Current?.Peers.FirstOrDefault(p => p.PeerId == msg.ByPeerId);
+				if (existing == null || existing.PeerId != msg.ByPeerId) return;
+
+				// Our desktop origin in Windows virtual space
+				var cluster = _displayService.GetLocalCluster();
+				double bMinX = cluster.Displays.Any() ? cluster.Displays.Min(d => (double)d.X) : 0;
+				double bMinY = cluster.Displays.Any() ? cluster.Displays.Min(d => (double)d.Y) : 0;
+
+				// ByPeer is to OUR left/above by RelDx/RelDy
+				var updated = existing with
+				{
+					X = bMinX - msg.RelDx,
+					Y = bMinY - msg.RelDy
+				};
+				_layout.UpsertPeerRect(updated);
+
+				// Persist so it survives restart
+				var store = _layoutStore.Load();
+				if (!store.Peers.TryGetValue(msg.ByPeerId, out var ps))
+				{
+					ps = new PeerLayoutState();
+					store.Peers[msg.ByPeerId] = ps;
+				}
+				ps.AppliedOffsetX = updated.X;
+				ps.AppliedOffsetY = updated.Y;
+				ps.HasSavedPosition = true;
+				_layoutStore.Save(store);
+			}
 		}
 		catch
 		{
@@ -119,7 +180,7 @@ public sealed class LayoutSyncHostedService : IHostedService
 		var cluster = _displayService.GetLocalCluster();
 
 		if (cluster.Displays.Count == 0)
-			return new PeerRect(_me.PeerId, 0, 0, 0, 0, _me.DeviceName);
+			return new PeerRect(cluster.PeerId, 0, 0, 0, 0);
 
 		var minX = cluster.Displays.Min(d => d.X);
 		var minY = cluster.Displays.Min(d => d.Y);
@@ -127,12 +188,12 @@ public sealed class LayoutSyncHostedService : IHostedService
 		var maxY = cluster.Displays.Max(d => d.Y + d.Height);
 
 		return new PeerRect(
-			PeerId: _me.PeerId,
+			PeerId: cluster.PeerId,
+			DeviceName: cluster.PeerName,
 			X: minX,
 			Y: minY,
 			Width: maxX - minX,
-			Height: maxY - minY,
-			DeviceName: _me.DeviceName
+			Height: maxY - minY
 		);
 	}
 }

@@ -73,8 +73,22 @@ public sealed class TargetSwitchingEngine : IDisposable
 		if (!IsOutsideInAxis(local, px, py, ExitMarginPx, exitAxis))
 			return;
 
-		// Find peer that contains current cursor position
-		if (!snap.TryFindPeerAt(px, py, out var targetPeerId))
+		// Probe just outside the local boundary in the direction of movement
+		// so remote peers positioned at the edge are found correctly
+		var probeX = px;
+		var probeY = py;
+		if (exitAxis == Axis.Horizontal)
+		{
+			if (dx > 0) probeX = local.X + local.Width + ExitMarginPx;  // right edge probe
+			else probeX = local.X - ExitMarginPx - 1;                    // left edge probe
+		}
+		else
+		{
+			if (dy > 0) probeY = local.Y + local.Height + ExitMarginPx;  // bottom edge probe
+			else probeY = local.Y - ExitMarginPx - 1;                    // top edge probe
+		}
+
+		if (!snap.TryFindPeerAt(probeX, probeY, out var targetPeerId))
 			return;
 
 		if (string.Equals(targetPeerId, _me.PeerId, StringComparison.Ordinal))

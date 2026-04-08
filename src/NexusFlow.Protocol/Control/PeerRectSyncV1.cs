@@ -7,9 +7,9 @@
 /// </summary>
 public sealed record PeerRectSyncV1(
 	string PeerId,
+	string DeviceName,
 	int MinX,
 	int MinY,
 	int Width,
-	int Height,
-	string DeviceName = ""
+	int Height
 );

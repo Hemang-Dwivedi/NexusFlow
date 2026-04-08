@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i 's/\\\\t\\\\t\\\\t\\\\tPeerId: msg\\\\.PeerId,$/\\\\t\\\\t\\\\t\\\\tPeerId: msg.PeerId,\\\\n\\\\t\\\\t\\\\t\\\\tDeviceName: msg.DeviceName,/' \"src/NexusFlow.Core/Layout/LayoutSyncHostedService.cs\")",
+      "Bash(sed -i 's/\\\\t\\\\t\\\\tPeerId: cluster\\\\.PeerId,$/\\\\t\\\\t\\\\tPeerId: cluster.PeerId,\\\\n\\\\t\\\\t\\\\tDeviceName: cluster.PeerName,/' \"src/NexusFlow.Core/Layout/LayoutSyncHostedService.cs\")",
+      "Bash(dotnet build:*)",
+      "Bash(git config:*)",
+      "Bash(gh pr:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/heman/AppData/Local/Programs/**)",
+      "Read(//c/Users/heman/**)",
+      "Bash(xargs grep:*)",
+      "Bash(git -c user.email=\"63600161+Hemang-Dwivedi@users.noreply.github.com\" -c user.name=\"Hemang-Dwivedi\" add src/NexusFlow.Input/WinHookCaptureService.cs src/NexusFlow.App/Hosted/LocalInputSuppressionHostedService.cs src/NexusFlow.App/Program.cs src/NexusFlow.UI/ViewModels/LayoutEditorViewModel.cs src/NexusFlow.UI/Views/LayoutEditorView.axaml src/NexusFlow.UI/NexusFlow.UI.csproj)",
+      "Bash(git -c:*)",
+      "Bash(git push:*)",
+      "Bash(findstr /i diag)",
+      "Bash(Get-ChildItem -Recurse -Filter \"*.axaml\" \"C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src\")",
+      "Bash(Select-Object FullName)",
+      "Bash(powershell -Command \"Get-ChildItem -Recurse -Filter ''*.axaml'' ''C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src'' | Select-Object -ExpandProperty FullName\")",
+      "Bash(powershell -Command \"Get-Content -Raw ''C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src\\\\NexusFlow.Core\\\\Layout\\\\LayoutSyncHostedService.cs'' | Select-String -Pattern ''UpsertPeerRect'' -AllMatches\")",
+      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\heman\\\\source\\\\repos\\\\Hemang-Dwivedi\\\\NexusFlow\\\\.claude\\\\worktrees\\\\eloquent-franklin\\\\src\\\\NexusFlow.App\\\\Program.cs'' | Select-Object -Index \\(105..113\\) | ForEach-Object { [int][char]$_0], $_}\")",
+      "Bash(powershell -Command:*)",
+      "Bash(where py:*)",
+      "Bash(dotnet --version)",
+      "Bash(powershell.exe -Command \"$path = ''C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/src/NexusFlow.App/Program.cs''; $text = [System.IO.File]::ReadAllText\\($path\\); $idx = $text.IndexOf\\(''AddSingleton<ConnectionManager>''\\); $text.Substring\\($idx, 200\\) | Format-Hex\")",
+      "Bash(powershell.exe -NoProfile -Command \"[System.IO.File]::ReadAllText\\(''C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/src/NexusFlow.App/Program.cs''\\).Substring\\(3300, 300\\) | Write-Host\")",
+      "Bash(powershell.exe -NoProfile -Command \"[System.IO.File]::ReadAllText\\(''C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/src/NexusFlow.App/Program.cs''\\).Substring\\(2700, 400\\) | Write-Host\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/fix_program.ps1\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Users/heman/source/repos/Hemang-Dwivedi/NexusFlow/.claude/worktrees/eloquent-franklin/fix_program2.ps1\")"
+    ]
+  }
+}

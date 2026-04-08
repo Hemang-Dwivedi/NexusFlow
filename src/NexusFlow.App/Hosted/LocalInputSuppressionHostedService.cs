@@ -1,62 +1,67 @@
 using Microsoft.Extensions.Hosting;
+using NexusFlow.Core.Diagnostics;
 using NexusFlow.Core.Routing;
 using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Input;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace NexusFlow.App.Hosted;
 
 /// <summary>
-/// Bridges routing state into WinHookCaptureService suppression.
-/// When the active target is a remote peer (and failsafe is not blocking),
-/// local keyboard, mouse button, and mouse scroll events are suppressed
-/// so they don't affect local applications while being sent to the remote.
-/// Mouse moves always pass through so cursor tracking and boundary detection work.
+/// Connects the routing engine to WinHookCaptureService.ShouldRouteToRemote.
+///
+/// The delegate is evaluated on the hook thread at the exact moment of every
+/// non-move input event — no flag, no race, no event subscription required.
+///
+/// When the delegate returns true the hook:
+///   1. Raises the captured event so the orchestrator can forward it to the remote.
+///   2. Returns non-zero to Windows, blocking delivery to any local application.
+///
+/// When false the hook passes the event through to local applications unchanged.
 /// </summary>
 public sealed class LocalInputSuppressionHostedService : IHostedService
 {
+    private const string Cat = "suppression";
+
     private readonly IWinHookCaptureService _hook;
     private readonly IRoutingEngine _routing;
     private readonly IFailsafeService _failsafe;
+    private readonly IDiagnosticsLog _log;
     private readonly string _localPeerId;
 
     public LocalInputSuppressionHostedService(
         IWinHookCaptureService hook,
         IRoutingEngine routing,
         IFailsafeService failsafe,
+        IDiagnosticsLog log,
         ILocalIdentity me)
     {
         _hook = hook;
         _routing = routing;
         _failsafe = failsafe;
+        _log = log;
         _localPeerId = me.PeerId;
     }
 
     public Task StartAsync(CancellationToken ct)
     {
-        _routing.ActiveTargetChanged += OnRoutingChanged;
-        _failsafe.Changed += OnFailsafeChanged;
-        Refresh();
+        // Wire the delegate once. The hook reads routing state fresh at every event.
+        _hook.ShouldRouteToRemote = ShouldRouteToRemote;
+        _log.Info(Cat, $"Input routing delegate installed. LocalPeerId={_localPeerId[..Math.Min(8, _localPeerId.Length)]}");
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken ct)
     {
-        _routing.ActiveTargetChanged -= OnRoutingChanged;
-        _failsafe.Changed -= OnFailsafeChanged;
-        _hook.SuppressLocalNonMoveInput = false;
+        _hook.ShouldRouteToRemote = null;
+        _log.Info(Cat, "Input routing delegate removed — all input passes through locally.");
         return Task.CompletedTask;
     }
 
-    private void OnRoutingChanged(object? sender, string _) => Refresh();
-    private void OnFailsafeChanged(bool _) => Refresh();
-
-    private void Refresh()
-    {
-        var targetIsRemote = _routing.ActiveTargetPeerId != _localPeerId;
-        var failsafeBlocked = _failsafe.IsBlocked;
-        _hook.SuppressLocalNonMoveInput = targetIsRemote && !failsafeBlocked;
-    }
+    // Called on the hook thread at the moment of every non-move input event.
+    private bool ShouldRouteToRemote()
+        => _routing.ActiveTargetPeerId != _localPeerId && !_failsafe.IsBlocked;
 }

@@ -4,10 +4,24 @@ namespace NexusFlow.Input;
 
 /// <summary>
 /// Low-level Windows input capture (keyboard + mouse).
-/// Emits events but never blocks input (always calls CallNextHookEx).
-/// No injection. No routing. Pure capture.
+///
+/// The hook owns every input event exclusively. For each non-move event it
+/// calls <see cref="ShouldRouteToRemote"/> to decide what to do:
+///
+///   • Delegate returns true  → event is captured (Key / MouseButton / MouseWheel
+///     raised so the orchestrator can forward it to the remote peer) and then
+///     BLOCKED locally (hook returns non-zero — Windows never delivers it to
+///     any application on this machine).
+///
+///   • Delegate returns false → event is NOT captured (nothing raised, nothing
+///     forwarded) and passed through normally to local applications.
+///
+/// Mouse moves always raise MouseMove (CursorTracker / TargetSwitchingEngine need
+/// deltas regardless of routing state), but the OS cursor is frozen locally when
+/// routing to remote — the physical cursor belongs on the remote screen.
+///
+/// The delegate is read at the moment of every event — no stale flag, no race.
 /// </summary>
-
 public interface IWinHookCaptureService
 {
 	event Action<CapturedKeyEvent>? Key;
@@ -15,7 +29,13 @@ public interface IWinHookCaptureService
 	event Action<CapturedMouseButtonEvent>? MouseButton;
 	event Action<CapturedMouseWheelEvent>? MouseWheel;
 
-	bool SuppressLocalNonMoveInput { get; set; }
+	/// <summary>
+	/// Predicate called on the hook thread for every non-move input event.
+	/// Return true to capture the event for the remote and block it locally;
+	/// return false to pass it through to local applications unchanged.
+	/// Set to null when local routing is in effect (equivalent to always false).
+	/// </summary>
+	Func<bool>? ShouldRouteToRemote { get; set; }
 
 	void Start();
 	void Stop();
@@ -43,12 +63,13 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 	private int _lastY;
 	private bool _hasLast;
 
-	private volatile bool _suppressLocalNonMoveInput;
+	// Read on the hook thread at the moment of each event — never stale.
+	private volatile Func<bool>? _shouldRouteToRemote;
 
-	public bool SuppressLocalNonMoveInput
+	public Func<bool>? ShouldRouteToRemote
 	{
-		get => _suppressLocalNonMoveInput;
-		set => _suppressLocalNonMoveInput = value;
+		get => _shouldRouteToRemote;
+		set => _shouldRouteToRemote = value;
 	}
 
 	public event Action<CapturedKeyEvent>? Key;
@@ -168,148 +189,172 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 
 	private IntPtr KbdHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
 	{
+		// Always pass to GlobalHotkeyListener FIRST so the failsafe (Shift+Esc)
+		// can trigger regardless of routing state.
+		CallNextHookEx(_kbdHook, nCode, wParam, lParam);
+
+		if (nCode < 0)
+			return (IntPtr)0;
+
 		try
 		{
-			if (nCode >= 0)
+			var msg = (KeyboardMessage)wParam;
+			if (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN or
+				KeyboardMessage.WM_KEYUP or KeyboardMessage.WM_SYSKEYUP)
 			{
-				var msg = (KeyboardMessage)wParam;
-				if (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN or
-					KeyboardMessage.WM_KEYUP or KeyboardMessage.WM_SYSKEYUP)
-				{
-					var kb = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+				var kb = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
 
-					// F.8: suppress events injected by NexusFlow
-					if (kb.dwExtraInfo == InjectedEventMarker.Magic)
-						return CallNextHookEx(_kbdHook, nCode, wParam, lParam);
+				// Never capture NexusFlow-injected events
+				if (kb.dwExtraInfo == InjectedEventMarker.Magic)
+					return (IntPtr)0;
 
-					var action = (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN)
-						? CapturedKeyAction.Down
-						: CapturedKeyAction.Up;
+				// Ask the routing layer: should this event go to the remote?
+				var routeToRemote = _shouldRouteToRemote?.Invoke() ?? false;
+				if (!routeToRemote)
+					return (IntPtr)0; // pass through to local apps normally
 
-					Key?.Invoke(new CapturedKeyEvent(
-						VkCode: kb.vkCode,
-						ScanCode: kb.scanCode,
-						Flags: kb.flags,
-						Action: action,
-						TimestampUtcTicks: DateTime.UtcNow.Ticks
-					));
-				}
+				// Capture for remote forwarding
+				var action = (msg is KeyboardMessage.WM_KEYDOWN or KeyboardMessage.WM_SYSKEYDOWN)
+					? CapturedKeyAction.Down
+					: CapturedKeyAction.Up;
+
+				Key?.Invoke(new CapturedKeyEvent(
+					VkCode: kb.vkCode,
+					ScanCode: kb.scanCode,
+					Flags: kb.flags,
+					Action: action,
+					TimestampUtcTicks: DateTime.UtcNow.Ticks
+				));
+
+				// Block local delivery — event goes to remote, not this machine
+				return (IntPtr)1;
 			}
 		}
 		catch
 		{
-			// swallow - never break global input
+			// swallow — never break global input
 		}
-
-		// Always call next hook first so GlobalHotkeyListener (failsafe) can see the event
-		CallNextHookEx(_kbdHook, nCode, wParam, lParam);
-
-		// Suppress local delivery when routing input to a remote peer
-		if (_suppressLocalNonMoveInput && nCode >= 0)
-			return (IntPtr)1;
 
 		return (IntPtr)0;
 	}
 
 	private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
 	{
+		if (nCode < 0)
+			return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
 		try
 		{
-			if (nCode >= 0)
+			var msg = (MouseMessage)wParam;
+			var ms = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+
+			// Never capture NexusFlow-injected events — always pass them through
+			if (ms.dwExtraInfo == InjectedEventMarker.Magic)
+				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
+			// Decide once for this entire event — avoids invoking the delegate twice.
+			var routeToRemote = _shouldRouteToRemote?.Invoke() ?? false;
+
+			// ── Mouse moves ───────────────────────────────────────────────────────
+			// Always raise MouseMove so CursorTracker / TargetSwitchingEngine receive
+			// deltas for boundary detection and remote cursor forwarding.
+			//
+			// IMPORTANT — reference-point semantics when frozen:
+			// Returning (IntPtr)1 keeps the OS cursor at the frozen position P0.
+			// Windows then computes every subsequent pt as:
+			//   pt[n] = P0 + acceleration(hardware_delta_this_interval)
+			// so dx = pt[n] - P0 = acceleration(hardware_delta_n)   [correct]
+			//
+			// If we updated _lastX/_lastY with pt[n-1] we would get:
+			//   dx = pt[n] - pt[n-1] = accel(d_n) - accel(d_{n-1})  [wrong]
+			// At constant speed this yields dx=0 → remote cursor stops after frame 1.
+			//
+			// Fix: when routing to remote, do NOT advance _lastX/_lastY so that P0
+			// remains the reference for every event in the frozen session.
+			if (msg == MouseMessage.WM_MOUSEMOVE)
 			{
-				var msg = (MouseMessage)wParam;
-				var ms = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+				var x = ms.pt.x;
+				var y = ms.pt.y;
 
-				// F.8: suppress NexusFlow-injected events
-				if (ms.dwExtraInfo == InjectedEventMarker.Magic)
-					return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
-
-				switch (msg)
+				if (_hasLast)
 				{
-					case MouseMessage.WM_MOUSEMOVE:
-						{
-							var x = ms.pt.x;
-							var y = ms.pt.y;
+					var dx = x - _lastX;
+					var dy = y - _lastY;
+					if (dx != 0 || dy != 0)
+					{
+						MouseMove?.Invoke(new CapturedMouseMoveEvent(
+							Dx: dx, Dy: dy, X: x, Y: y,
+							TimestampUtcTicks: DateTime.UtcNow.Ticks
+						));
+					}
+				}
 
-							if (!_hasLast)
-							{
-								_lastX = x; _lastY = y; _hasLast = true;
-								break;
-							}
+				if (routeToRemote)
+				{
+					// Keep _lastX/_lastY at P0 (the frozen cursor position).
+					// Only initialise on the very first event ever.
+					if (!_hasLast) { _lastX = x; _lastY = y; _hasLast = true; }
+					return (IntPtr)1; // freeze local cursor
+				}
 
-							var dx = x - _lastX;
-							var dy = y - _lastY;
-							_lastX = x; _lastY = y;
+				// Local routing — advance the reference and pass through.
+				_lastX = x; _lastY = y; _hasLast = true;
+				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+			}
 
-							if (dx != 0 || dy != 0)
-							{
-								MouseMove?.Invoke(new CapturedMouseMoveEvent(
-									Dx: dx, Dy: dy,
-									X: x, Y: y,
-									TimestampUtcTicks: DateTime.UtcNow.Ticks
-								));
-							}
-							break;
-						}
+			// ── Buttons and wheel ─────────────────────────────────────────────────
+			if (!routeToRemote)
+			{
+				// Local routing — do not capture, pass event to local applications
+				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+			}
 
-					case MouseMessage.WM_LBUTTONDOWN:
-					case MouseMessage.WM_LBUTTONUP:
-					case MouseMessage.WM_RBUTTONDOWN:
-					case MouseMessage.WM_RBUTTONUP:
-					case MouseMessage.WM_MBUTTONDOWN:
-					case MouseMessage.WM_MBUTTONUP:
-						{
-							var (btn, act) = msg switch
-							{
-								MouseMessage.WM_LBUTTONDOWN => (CapturedMouseButton.Left, MouseButtonAction.Down),
-								MouseMessage.WM_LBUTTONUP => (CapturedMouseButton.Left, MouseButtonAction.Up),
-								MouseMessage.WM_RBUTTONDOWN => (CapturedMouseButton.Right, MouseButtonAction.Down),
-								MouseMessage.WM_RBUTTONUP => (CapturedMouseButton.Right, MouseButtonAction.Up),
-								MouseMessage.WM_MBUTTONDOWN => (CapturedMouseButton.Middle, MouseButtonAction.Down),
-								MouseMessage.WM_MBUTTONUP => (CapturedMouseButton.Middle, MouseButtonAction.Up),
-								_ => (CapturedMouseButton.Left, MouseButtonAction.Down)
-							};
+			// Remote routing — capture the event and block local delivery
+			switch (msg)
+			{
+				case MouseMessage.WM_LBUTTONDOWN:
+				case MouseMessage.WM_LBUTTONUP:
+				case MouseMessage.WM_RBUTTONDOWN:
+				case MouseMessage.WM_RBUTTONUP:
+				case MouseMessage.WM_MBUTTONDOWN:
+				case MouseMessage.WM_MBUTTONUP:
+				{
+					var (btn, act) = msg switch
+					{
+						MouseMessage.WM_LBUTTONDOWN => (CapturedMouseButton.Left,   MouseButtonAction.Down),
+						MouseMessage.WM_LBUTTONUP   => (CapturedMouseButton.Left,   MouseButtonAction.Up),
+						MouseMessage.WM_RBUTTONDOWN => (CapturedMouseButton.Right,  MouseButtonAction.Down),
+						MouseMessage.WM_RBUTTONUP   => (CapturedMouseButton.Right,  MouseButtonAction.Up),
+						MouseMessage.WM_MBUTTONDOWN => (CapturedMouseButton.Middle, MouseButtonAction.Down),
+						MouseMessage.WM_MBUTTONUP   => (CapturedMouseButton.Middle, MouseButtonAction.Up),
+						_                           => (CapturedMouseButton.Left,   MouseButtonAction.Down)
+					};
+					MouseButton?.Invoke(new CapturedMouseButtonEvent(
+						Button: btn, Action: act,
+						X: ms.pt.x, Y: ms.pt.y,
+						TimestampUtcTicks: DateTime.UtcNow.Ticks
+					));
+					break;
+				}
 
-							MouseButton?.Invoke(new CapturedMouseButtonEvent(
-								Button: btn,
-								Action: act,
-								X: ms.pt.x,
-								Y: ms.pt.y,
-								TimestampUtcTicks: DateTime.UtcNow.Ticks
-							));
-							break;
-						}
-
-					case MouseMessage.WM_MOUSEWHEEL:
-						{
-							var delta = (short)((ms.mouseData >> 16) & 0xFFFF);
-							MouseWheel?.Invoke(new CapturedMouseWheelEvent(
-								Delta: delta,
-								X: ms.pt.x,
-								Y: ms.pt.y,
-								TimestampUtcTicks: DateTime.UtcNow.Ticks
-							));
-							break;
-						}
+				case MouseMessage.WM_MOUSEWHEEL:
+				{
+					var delta = (short)((ms.mouseData >> 16) & 0xFFFF);
+					MouseWheel?.Invoke(new CapturedMouseWheelEvent(
+						Delta: delta,
+						X: ms.pt.x, Y: ms.pt.y,
+						TimestampUtcTicks: DateTime.UtcNow.Ticks
+					));
+					break;
 				}
 			}
+
+			// Block local delivery — event owned by NexusFlow, forwarded to remote
+			return (IntPtr)1;
 		}
 		catch
 		{
-			// swallow - never break global input
-		}
-
-		// For non-move events: suppress local delivery WITHOUT calling CallNextHookEx.
-		// Unlike keyboard (where GlobalHotkeyListener is also in the WH_KEYBOARD_LL chain),
-		// WinHookCaptureService is the only WH_MOUSE_LL hook. Calling CallNextHookEx first
-		// passes directly to the OS end-of-chain which delivers the event to applications
-		// before our return value is checked. Returning 1 immediately is the correct approach.
-		// Mouse moves always pass through so cursor tracking and boundary detection work.
-		if (_suppressLocalNonMoveInput && nCode >= 0)
-		{
-			var msg2 = (MouseMessage)wParam;
-			if (msg2 != MouseMessage.WM_MOUSEMOVE)
-				return (IntPtr)1;
+			// swallow — never break global input
 		}
 
 		return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
