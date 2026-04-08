@@ -76,11 +76,6 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
     private bool _isBlockDrag;
     private readonly Dictionary<string, (double Dx, double Dy)> _blockStartPos = new();
 
-    // Track last known virtual position for each remote peer.
-    // Used to detect whether a re-derive is caused by a real remote position change
-    // vs. the local cluster moving (which shifts localCanvasLeft and would otherwise
-    // cause remote tiles to jump).
-    private readonly Dictionary<string, (double VX, double VY)> _lastVirtual = new();
 
     public LayoutEditorViewModel(
         ILayoutState layout,
@@ -167,16 +162,46 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         _localScale = Math.Max(0.01, Math.Min(scaleH, scaleW));
         _rowH = maxVH * _localScale;
 
-        // Auto-centre: compute the combined canvas width of local cluster + remote peers
-        // so that on first load the whole arrangement is centred rather than left-anchored.
-        double localClusterW = sorted.Sum(d => Math.Max(minTileW, d.Width  * _localScale))
-                               + tileGap * Math.Max(0, sorted.Count - 1);
-        double remoteEstW    = _rawRects.Count > 0
-            ? _rawRects.Values.Sum(r => Math.Max(minTileW, r.Width * _localScale))
-              + tileGap * (_rawRects.Count - 1)
-            : 0.0;
-        double totalEstW     = localClusterW + (remoteEstW > 0 ? tileGap + remoteEstW : 0);
-        _defaultOriginX = Math.Max(10.0, (CanvasWidth  - totalEstW) / 2.0);
+        // Virtual extents of the local cluster (needed early for positioning logic)
+        double localVirtMaxX = sorted.Max(d => (double)(d.X + d.Width));
+        double localVirtMaxY = sorted.Max(d => (double)(d.Y + d.Height));
+        double localVirtW    = localVirtMaxX - _localMinX;
+
+        // Compute _defaultOriginX: the canvas X where virtual offset 0 (local left edge) lives.
+        //
+        // All tiles — local AND remote — use _localScale, so:
+        //   canvasX = _defaultOriginX + (virtualX - _localMinX) * _localScale
+        //
+        // We need _defaultOriginX large enough that even peers with NEGATIVE virtual offset
+        // (i.e. positioned to the LEFT of the local cluster) get a non-negative canvas X.
+        //
+        // Algorithm: find the min/max signed virtual offsets of all positioned remote peers,
+        // then pick _defaultOriginX so the whole arrangement is centred and has padding >= 24px.
+        const double padding = 24.0;
+        double minVirtOff = 0.0;        // local left = offset 0
+        double maxVirtOff = localVirtW; // local right edge
+
+        foreach (var kv in _rawRects)
+        {
+            var r = kv.Value;
+            // "Unpositioned" = virtual rect overlaps local (both peers start at 0,0 — not yet arranged)
+            bool isUnpos = r.X < localVirtMaxX && r.X + r.Width > _localMinX &&
+                           r.Y < localVirtMaxY && r.Y + r.Height > _localMinY;
+            if (isUnpos) continue;
+
+            double leftOff  = r.X - _localMinX;
+            double rightOff = leftOff + r.Width;
+            minVirtOff = Math.Min(minVirtOff, leftOff);
+            maxVirtOff = Math.Max(maxVirtOff, rightOff);
+        }
+
+        double minCanvOff  = minVirtOff * _localScale;  // can be negative (peers to the left)
+        double maxCanvOff  = maxVirtOff * _localScale;
+        double totalSpan   = maxCanvOff - minCanvOff;
+        // Centre the span; guarantee padding on the left of the leftmost tile
+        double centred     = (CanvasWidth - totalSpan) / 2.0;
+        _defaultOriginX    = Math.Max(padding, Math.Max(padding - minCanvOff, centred));
+
         _defaultOriginY = (CanvasHeight - _rowH) / 2.0;
 
         // 4. Initialise / update local tile positions
@@ -217,10 +242,6 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             .Select(k => _pos[k].Dx)
             .DefaultIfEmpty(_defaultOriginX).Min();
 
-        // Virtual extents of the local cluster (used to detect unpositioned remote peers)
-        double localVirtMaxX = sorted.Max(d => (double)(d.X + d.Width));
-        double localVirtMaxY = sorted.Max(d => (double)(d.Y + d.Height));
-
         // 5. Prune stale remote keys from _pos
         var validRemote = _rawRects.Keys.ToHashSet();
         foreach (var k in _pos.Keys.Except(_localKeys).Except(validRemote).ToList())
@@ -228,52 +249,39 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
         // 6. Initialise / update remote tile positions.
         //
-        // Canvas position is derived RELATIVE to where the local cluster sits on
-        // canvas — so the layout is correct regardless of canvas size or resolution.
+        // ALL tiles use _localScale — the single consistent scale for the whole canvas.
+        // This means:
+        //   canvasX = localCanvasLeft + (virtualX - _localMinX) * _localScale
+        //   virtualX = _localMinX + (canvasX - localCanvasLeft) / _localScale   (used in Apply)
         //
-        // Exception: peers whose virtual rect still overlaps the local cluster have
-        // not been positioned yet (both start at 0,0). Those get a default placement
-        // to the right so tiles never stack on top of each other at startup.
+        // Remote tiles therefore FOLLOW the local cluster when it is dragged, which is correct
+        // because the virtual coordinate system is relative to the local cluster's position.
         //
-        // If the user is actively dragging a tile or has an uncommitted local change
-        // (Dx != Ax), the in-progress edit is preserved so the drag is not interrupted.
-        double remoteAreaW = CanvasWidth  - actualLocalRight - 30;
-        double remoteAreaH = CanvasHeight - 20;
+        // Peers whose virtual rect still overlaps the local cluster (both start at 0,0 — not
+        // yet explicitly arranged) are placed to the right of the local cluster as a default.
+        //
+        // The _defaultOriginX is computed above to guarantee all positioned peers have a
+        // non-negative canvas X on first render, so no clamping is needed here.
 
         foreach (var kv in _rawRects)
         {
             var rect = kv.Value;
-            double rScaleW = remoteAreaW / Math.Max(1, rect.Width);
-            double rScaleH = remoteAreaH / Math.Max(1, rect.Height);
-            double rScale  = Math.Min(_localScale, Math.Min(rScaleW, rScaleH));
-            rScale = Math.Max(rScale, 0.01);
-            double rNw = Math.Max(minTileW, rect.Width  * rScale);
-            double rNh = Math.Max(minTileH, rect.Height * rScale);
 
-            // Relative canvas position: offset from the local cluster's actual canvas
-            // left by the virtual offset between remote and local.
+            // Same scale as local tiles — FIXED regardless of local cluster position
+            double rNw = Math.Max(minTileW, rect.Width  * _localScale);
+            double rNh = Math.Max(minTileH, rect.Height * _localScale);
+
+            // Canvas position derived from virtual offset relative to local cluster
             double derivedX = localCanvasLeft + (rect.X - _localMinX) * _localScale;
             double derivedY = _defaultOriginY  + (rect.Y - _localMinY) * _localScale;
 
-            // Detect whether the peer's VIRTUAL position actually changed.
-            // If it didn't, only the local cluster moved on canvas (localCanvasLeft shifted),
-            // which would wrongly relocate remote tiles and cause overlap.
-            bool virtualChanged = !_lastVirtual.TryGetValue(rect.PeerId, out var lv) ||
-                                   Math.Abs(lv.VX - rect.X) > 0.1 ||
-                                   Math.Abs(lv.VY - rect.Y) > 0.1;
-            _lastVirtual[rect.PeerId] = (rect.X, rect.Y);
-
-            // For peers that haven't been manually arranged yet (their virtual rect still
-            // sits on top of the local cluster, i.e. both start at origin 0,0),
-            // default to placing them to the right of the local cluster.
+            // Unpositioned peers (overlapping in virtual space = not yet arranged):
+            // place them to the right of the local cluster as a temporary default.
             bool isUnpositioned =
                 rect.X < localVirtMaxX && rect.X + rect.Width  > _localMinX &&
                 rect.Y < localVirtMaxY && rect.Y + rect.Height > _localMinY;
             if (isUnpositioned)
                 derivedX = actualLocalRight + 20;
-
-            derivedX = Math.Max(0, Math.Min(CanvasWidth  - rNw, derivedX));
-            derivedY = Math.Max(0, Math.Min(CanvasHeight - rNh, derivedY));
 
             if (!_pos.ContainsKey(rect.PeerId))
             {
@@ -288,13 +296,10 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
                 if (dragging || pending)
                     // User is editing — keep draft position, only refresh size
                     _pos[rect.PeerId] = (e.Ax, e.Ay, e.Dx, e.Dy, rNw, rNh);
-                else if (virtualChanged)
-                    // Remote peer sent a new position (sync) — re-derive canvas coords
-                    _pos[rect.PeerId] = (derivedX, derivedY, derivedX, derivedY, rNw, rNh);
                 else
-                    // Same virtual position — preserve canvas position so local cluster
-                    // movement doesn't drag remote tiles along with it
-                    _pos[rect.PeerId] = (e.Ax, e.Ay, e.Ax, e.Ay, rNw, rNh);
+                    // No edit in progress — re-derive so tile follows local cluster on drag
+                    // and stays in sync when a remote position update arrives
+                    _pos[rect.PeerId] = (derivedX, derivedY, derivedX, derivedY, rNw, rNh);
             }
         }
 
