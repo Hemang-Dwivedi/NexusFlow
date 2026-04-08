@@ -66,7 +66,7 @@ public static class DisplayLayoutNormalizer
 			))
 			.ToList();
 
-		return new NormalizedCluster(cluster, scale, minX, minY, totalW, totalH, normalized);
+		return new NormalizedCluster(cluster, scale, minX, minY, normalizedW, normalizedH, normalized);
 
 	}
 }
