@@ -180,7 +180,7 @@ public sealed class LayoutSyncHostedService : IHostedService
 		var cluster = _displayService.GetLocalCluster();
 
 		if (cluster.Displays.Count == 0)
-			return new PeerRect(cluster.PeerId, 0, 0, 0, 0);
+			return new PeerRect(_localIdentity.PeerId, 0, 0, 0, 0, _localIdentity.DeviceName);
 
 		var minX = cluster.Displays.Min(d => d.X);
 		var minY = cluster.Displays.Min(d => d.Y);
@@ -188,8 +188,8 @@ public sealed class LayoutSyncHostedService : IHostedService
 		var maxY = cluster.Displays.Max(d => d.Y + d.Height);
 
 		return new PeerRect(
-			PeerId: cluster.PeerId,
-			DeviceName: cluster.PeerName,
+			PeerId: _localIdentity.PeerId,
+			DeviceName: _localIdentity.DeviceName,
 			X: minX,
 			Y: minY,
 			Width: maxX - minX,
