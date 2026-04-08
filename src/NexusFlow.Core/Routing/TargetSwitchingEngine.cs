@@ -104,7 +104,7 @@ public sealed class TargetSwitchingEngine : IDisposable
 		// Snap cursor to the exact edge pixel before the hook freezes it.
 		// Without this the cursor stops wherever the OS last placed it,
 		// which may be a few pixels past the boundary — off the physical screen.
-		SnapCursorToEdge(local, exitAxis, dx, dy);
+		SnapCursorToEdge(local, exitAxis, dx, dy, (int)px, (int)py);
 
 		// Distributed stamped target switch
 		_ = _routing.RequestSetActiveTargetAsync(targetPeerId);
@@ -133,21 +133,15 @@ public sealed class TargetSwitchingEngine : IDisposable
 
 	private enum Axis { Horizontal, Vertical }
 
-	private static void SnapCursorToEdge(PeerRect local, Axis axis, int dx, int dy)
+	private static void SnapCursorToEdge(PeerRect local, Axis axis, int dx, int dy, int currentX, int currentY)
 	{
 		try
 		{
-			int ex, ey;
+			int ex = currentX, ey = currentY;
 			if (axis == Axis.Horizontal)
-			{
-				ex = dx > 0 ? (int)(local.X + local.Width  - 1) : (int)local.X;
-				ey = (int)(local.Y + local.Height / 2);
-			}
+				ex = dx > 0 ? (int)(local.X + local.Width - 1) : (int)local.X;
 			else
-			{
-				ex = (int)(local.X + local.Width / 2);
 				ey = dy > 0 ? (int)(local.Y + local.Height - 1) : (int)local.Y;
-			}
 			SetCursorPos(ex, ey);
 		}
 		catch { }

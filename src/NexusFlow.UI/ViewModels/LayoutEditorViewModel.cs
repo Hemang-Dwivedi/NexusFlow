@@ -230,12 +230,12 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             double derivedX = _defaultOriginX + (rect.X - _localMinX) * _localScale;
             double derivedY = _defaultOriginY + (rect.Y - _localMinY) * _localScale;
 
-            // Only fall back to "right of cluster" if this peer has never been
-            // explicitly positioned (no saved position and coords overlap local).
-            // If a LayoutPositionSyncV1 placed the peer to the left (derivedX < 0),
-            // honour that — clamping to canvas bounds below keeps it visible.
-            var hasSaved = _persisted.Peers.TryGetValue(rect.PeerId, out var ps) && ps.HasSavedPosition;
-            if (!hasSaved && derivedX < actualLocalRight - 10)
+            // If the derived canvas position overlaps the local cluster (e.g. because
+            // the remote peer's raw virtual origin is 0,0 just like the local one),
+            // fall back to placing it right of the cluster so tiles never overlap.
+            // Once the user drags + Applies, virtualX shifts outward and this
+            // fallback no longer triggers.
+            if (derivedX < actualLocalRight - 10)
                 derivedX = actualLocalRight + 20;
 
             derivedX = Math.Max(0, Math.Min(CanvasWidth  - rNw, derivedX));
