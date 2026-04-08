@@ -76,6 +76,12 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
     private bool _isBlockDrag;
     private readonly Dictionary<string, (double Dx, double Dy)> _blockStartPos = new();
 
+    // Track last known virtual position for each remote peer.
+    // Used to detect whether a re-derive is caused by a real remote position change
+    // vs. the local cluster moving (which shifts localCanvasLeft and would otherwise
+    // cause remote tiles to jump).
+    private readonly Dictionary<string, (double VX, double VY)> _lastVirtual = new();
+
     public LayoutEditorViewModel(
         ILayoutState layout,
         ILayoutStore layoutStore,
@@ -161,7 +167,16 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         _localScale = Math.Max(0.01, Math.Min(scaleH, scaleW));
         _rowH = maxVH * _localScale;
 
-        _defaultOriginX = 24;
+        // Auto-centre: compute the combined canvas width of local cluster + remote peers
+        // so that on first load the whole arrangement is centred rather than left-anchored.
+        double localClusterW = sorted.Sum(d => Math.Max(minTileW, d.Width  * _localScale))
+                               + tileGap * Math.Max(0, sorted.Count - 1);
+        double remoteEstW    = _rawRects.Count > 0
+            ? _rawRects.Values.Sum(r => Math.Max(minTileW, r.Width * _localScale))
+              + tileGap * (_rawRects.Count - 1)
+            : 0.0;
+        double totalEstW     = localClusterW + (remoteEstW > 0 ? tileGap + remoteEstW : 0);
+        _defaultOriginX = Math.Max(10.0, (CanvasWidth  - totalEstW) / 2.0);
         _defaultOriginY = (CanvasHeight - _rowH) / 2.0;
 
         // 4. Initialise / update local tile positions
@@ -240,8 +255,17 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             double derivedX = localCanvasLeft + (rect.X - _localMinX) * _localScale;
             double derivedY = _defaultOriginY  + (rect.Y - _localMinY) * _localScale;
 
-            // Only fall back to right-of-local placement for unpositioned peers —
-            // those whose virtual rect overlaps the local cluster (not yet arranged).
+            // Detect whether the peer's VIRTUAL position actually changed.
+            // If it didn't, only the local cluster moved on canvas (localCanvasLeft shifted),
+            // which would wrongly relocate remote tiles and cause overlap.
+            bool virtualChanged = !_lastVirtual.TryGetValue(rect.PeerId, out var lv) ||
+                                   Math.Abs(lv.VX - rect.X) > 0.1 ||
+                                   Math.Abs(lv.VY - rect.Y) > 0.1;
+            _lastVirtual[rect.PeerId] = (rect.X, rect.Y);
+
+            // For peers that haven't been manually arranged yet (their virtual rect still
+            // sits on top of the local cluster, i.e. both start at origin 0,0),
+            // default to placing them to the right of the local cluster.
             bool isUnpositioned =
                 rect.X < localVirtMaxX && rect.X + rect.Width  > _localMinX &&
                 rect.Y < localVirtMaxY && rect.Y + rect.Height > _localMinY;
@@ -258,15 +282,19 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
             else
             {
                 var e = _pos[rect.PeerId];
-                bool pending   = Math.Abs(e.Dx - e.Ax) > 0.5 || Math.Abs(e.Dy - e.Ay) > 0.5;
-                bool dragging  = rect.PeerId == _dragKey;
+                bool pending  = Math.Abs(e.Dx - e.Ax) > 0.5 || Math.Abs(e.Dy - e.Ay) > 0.5;
+                bool dragging = rect.PeerId == _dragKey;
 
-                if (pending || dragging)
-                    // Local edit in progress — keep draft, only refresh size
+                if (dragging || pending)
+                    // User is editing — keep draft position, only refresh size
                     _pos[rect.PeerId] = (e.Ax, e.Ay, e.Dx, e.Dy, rNw, rNh);
-                else
-                    // No pending changes — sync canvas position from routing state
+                else if (virtualChanged)
+                    // Remote peer sent a new position (sync) — re-derive canvas coords
                     _pos[rect.PeerId] = (derivedX, derivedY, derivedX, derivedY, rNw, rNh);
+                else
+                    // Same virtual position — preserve canvas position so local cluster
+                    // movement doesn't drag remote tiles along with it
+                    _pos[rect.PeerId] = (e.Ax, e.Ay, e.Ax, e.Ay, rNw, rNh);
             }
         }
 
@@ -498,8 +526,112 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
     public void EndDrag()
     {
+        if (IsDragging)
+        {
+            if (_isBlockDrag)
+                ResolveBlockOverlaps();
+            else if (_dragKey != null && _pos.TryGetValue(_dragKey, out var p))
+            {
+                var (sx, sy) = PushOutOfOverlaps(_dragKey, p.Dx, p.Dy, p.Nw, p.Nh);
+                _pos[_dragKey] = (p.Ax, p.Ay, sx, sy, p.Nw, p.Nh);
+            }
+            RefreshLayout(_layout.Current);
+        }
         IsDragging = false;
         _dragKey   = null;
+    }
+
+    // Push a single tile out of all overlapping tiles using minimum-displacement.
+    private (double x, double y) PushOutOfOverlaps(string key, double dx, double dy, double nw, double nh)
+    {
+        const int maxIter = 8;
+        for (int i = 0; i < maxIter; i++)
+        {
+            bool any = false;
+            foreach (var kv in _pos)
+            {
+                if (kv.Key == key) continue;
+                var o = kv.Value;
+                double ox = Math.Min(dx + nw, o.Dx + o.Nw) - Math.Max(dx, o.Dx);
+                double oy = Math.Min(dy + nh, o.Dy + o.Nh) - Math.Max(dy, o.Dy);
+                if (ox <= 0 || oy <= 0) continue;
+                any = true;
+                if (ox <= oy)
+                {
+                    // Push horizontally
+                    bool pushRight = (dx + nw / 2) < (o.Dx + o.Nw / 2);
+                    dx = pushRight ? o.Dx - nw : o.Dx + o.Nw;
+                }
+                else
+                {
+                    // Push vertically
+                    bool pushDown = (dy + nh / 2) < (o.Dy + o.Nh / 2);
+                    dy = pushDown ? o.Dy - nh : o.Dy + o.Nh;
+                }
+                dx = Math.Clamp(dx, 0, CanvasWidth  - nw);
+                dy = Math.Clamp(dy, 0, CanvasHeight - nh);
+            }
+            if (!any) break;
+        }
+        return (dx, dy);
+    }
+
+    // Push the entire local block out of any remote tile it overlaps.
+    private void ResolveBlockOverlaps()
+    {
+        const int maxIter = 8;
+        for (int i = 0; i < maxIter; i++)
+        {
+            bool any = false;
+            foreach (var remKey in _rawRects.Keys)
+            {
+                if (!_pos.TryGetValue(remKey, out var o)) continue;
+
+                // Find any local tile that overlaps this remote tile
+                bool overlap = _localKeys.Any(lk =>
+                {
+                    if (!_pos.TryGetValue(lk, out var lt)) return false;
+                    return Math.Min(lt.Dx + lt.Nw, o.Dx + o.Nw) - Math.Max(lt.Dx, o.Dx) > 0 &&
+                           Math.Min(lt.Dy + lt.Nh, o.Dy + o.Nh) - Math.Max(lt.Dy, o.Dy) > 0;
+                });
+                if (!overlap) continue;
+                any = true;
+
+                // Compute worst overlap across all local tiles vs this remote tile
+                double worstOx = 0, worstOy = 0;
+                foreach (var lk in _localKeys)
+                {
+                    if (!_pos.TryGetValue(lk, out var lt)) continue;
+                    double ox = Math.Min(lt.Dx + lt.Nw, o.Dx + o.Nw) - Math.Max(lt.Dx, o.Dx);
+                    double oy = Math.Min(lt.Dy + lt.Nh, o.Dy + o.Nh) - Math.Max(lt.Dy, o.Dy);
+                    if (ox > 0 && oy > 0 && ox > worstOx) worstOx = ox;
+                    if (ox > 0 && oy > 0 && oy > worstOy) worstOy = oy;
+                }
+
+                // Compute push for the whole block
+                double pushX = 0, pushY = 0;
+                if (worstOx <= worstOy)
+                {
+                    double blockCx = _localKeys.Where(_pos.ContainsKey).Average(k => _pos[k].Dx + _pos[k].Nw / 2);
+                    pushX = blockCx < (o.Dx + o.Nw / 2) ? -worstOx : worstOx;
+                }
+                else
+                {
+                    double blockCy = _localKeys.Where(_pos.ContainsKey).Average(k => _pos[k].Dy + _pos[k].Nh / 2);
+                    pushY = blockCy < (o.Dy + o.Nh / 2) ? -worstOy : worstOy;
+                }
+
+                foreach (var lk in _localKeys)
+                {
+                    if (!_pos.TryGetValue(lk, out var lt)) continue;
+                    _pos[lk] = (lt.Ax, lt.Ay,
+                        Math.Clamp(lt.Dx + pushX, 0, CanvasWidth  - lt.Nw),
+                        Math.Clamp(lt.Dy + pushY, 0, CanvasHeight - lt.Nh),
+                        lt.Nw, lt.Nh);
+                }
+            }
+            if (!any) break;
+        }
     }
 
     // ── Commands ──────────────────────────────────────────────────────────────

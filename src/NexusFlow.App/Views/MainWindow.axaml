@@ -5,7 +5,8 @@
         x:Class="NexusFlow.App.Views.MainWindow"
         x:DataType="uiVm:MainViewModel"
         Width="1200" Height="750"
-        Title="NexusFlow">
+        Title="NexusFlow"
+        CanResize="False">
 
   <TabControl HorizontalContentAlignment="Stretch"
             VerticalContentAlignment="Stretch">

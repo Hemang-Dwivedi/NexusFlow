@@ -42,9 +42,9 @@
       <Setter Property="CornerRadius"    Value="6"/>
       <Setter Property="Cursor"          Value="Arrow"/>
     </Style>
-    <!-- Draggable tiles show the move cursor -->
+    <!-- Draggable tiles: default cursor stays Arrow; handle strip shows SizeAll -->
     <Style Selector="Border.displayTile.draggable">
-      <Setter Property="Cursor" Value="SizeAll"/>
+      <Setter Property="Cursor" Value="Arrow"/>
     </Style>
     <!-- Local tiles: blue tint -->
     <Style Selector="Border.displayTile.localTile">
@@ -165,16 +165,29 @@
                             PointerPressed="TilePointerPressed"
                             PointerMoved="TilePointerMoved"
                             PointerReleased="TilePointerReleased">
-                      <Grid RowDefinitions="*,Auto">
+                      <Grid RowDefinitions="14,*,Auto">
+                        <!-- Drag handle strip (top) — SizeAll cursor scoped here only -->
+                        <Border Grid.Row="0"
+                                Background="#00000028"
+                                CornerRadius="5,5,0,0"
+                                Cursor="SizeAll"
+                                IsVisible="{Binding IsDraggable}">
+                          <TextBlock Text="· · ·"
+                                     HorizontalAlignment="Center"
+                                     VerticalAlignment="Center"
+                                     FontSize="9"
+                                     Foreground="#50FFFFFF"
+                                     IsHitTestVisible="False"/>
+                        </Border>
                         <!-- Display number (center) -->
-                        <TextBlock Grid.Row="0"
+                        <TextBlock Grid.Row="1"
                                    Text="{Binding DisplayNumber}"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"
                                    FontSize="22" FontWeight="Bold"
                                    Foreground="White"/>
                         <!-- Peer/device label (bottom strip for remote tiles) -->
-                        <Border Grid.Row="1"
+                        <Border Grid.Row="2"
                                 Background="#00000040"
                                 Padding="4,2"
                                 IsVisible="{Binding !IsLocal}">
