@@ -503,6 +503,9 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
                     cur.Nw, cur.Nh);
             }
 
+            // Hard-wall: prevent the block from overlapping any remote tile while dragging
+            ResolveBlockOverlaps();
+
             RefreshLayout(_layout.Current);
             return;
         }
@@ -546,7 +549,11 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         }
 
         if (_pos.TryGetValue(_dragKey, out var cur2))
+        {
+            // Hard-wall: prevent this tile from overlapping any other tile while dragging
+            (xS, yS) = PushOutOfOverlaps(_dragKey, xS, yS, cur2.Nw, cur2.Nh);
             _pos[_dragKey] = (cur2.Ax, cur2.Ay, xS, yS, cur2.Nw, cur2.Nh);
+        }
 
         RefreshLayout(_layout.Current);
     }
