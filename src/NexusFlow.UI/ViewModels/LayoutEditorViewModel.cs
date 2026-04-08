@@ -148,7 +148,6 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
         var sorted = localCluster.Displays.OrderBy(d => d.X).ThenBy(d => d.Y).ToList();
 
-        const double tileGap  = 10.0;
         const double minTileW = 80.0;
         const double minTileH = 52.0;
         const double padding  = 24.0;
@@ -179,8 +178,7 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
         }
 
         // Compute _localScale to fit ALL clusters inside the canvas at once
-        double localGapTotal = tileGap * Math.Max(0, sorted.Count - 1);
-        double scaleW = (CanvasWidth  - 2 * padding - localGapTotal) / Math.Max(1, fullVirtMaxX - fullVirtMinX);
+        double scaleW = (CanvasWidth  - 2 * padding) / Math.Max(1, fullVirtMaxX - fullVirtMinX);
         double scaleH = (CanvasHeight - 2 * padding) / Math.Max(1, fullVirtMaxY - fullVirtMinY);
         _localScale = Math.Max(0.01, Math.Min(scaleW, scaleH));
         _rowH = localVirtH * _localScale;
@@ -248,11 +246,11 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
                 var e = _pos[d.StableId];
                 _pos[d.StableId] = (e.Ax, e.Ay, e.Dx, e.Dy, nw, nh);
             }
-            cx += nw + tileGap;
+            cx += nw;
         }
 
         // Right edge of default local row (used as default remote placement)
-        double defaultLocalRight = cx - tileGap;
+        double defaultLocalRight = cx;
 
         // Actual right edge from current (possibly dragged) positions
         double actualLocalRight = _localKeys.Where(_pos.ContainsKey)
