@@ -7,6 +7,22 @@ using NexusFlow.Input;
 
 namespace NexusFlow.Tests.Unit;
 
+/// <summary>Captures SetP0 calls for assertion; no-ops everything else.</summary>
+internal sealed class FakeWinHookCaptureService : IWinHookCaptureService
+{
+    public event Action<CapturedKeyEvent>?         Key         { add { } remove { } }
+    public event Action<CapturedMouseMoveEvent>?   MouseMove   { add { } remove { } }
+    public event Action<CapturedMouseButtonEvent>? MouseButton { add { } remove { } }
+    public event Action<CapturedMouseWheelEvent>?  MouseWheel  { add { } remove { } }
+    public Func<bool>? ShouldRouteToRemote { get; set; }
+
+    public (int X, int Y)? LastP0 { get; private set; }
+    public void SetP0(int x, int y) => LastP0 = (x, y);
+
+    public void Start() { }
+    public void Stop()  { }
+}
+
 /// <summary>Fires the Moved event on demand.</summary>
 internal sealed class FakeCursorTracker : ICursorTracker
 {
@@ -65,9 +81,10 @@ public class TargetSwitchingEngineTests
         var failsafe = new FailsafeService();
         var layout   = new FakeLayoutState(snap);
         var identity = new FakeIdentity(localPeerId);
+        var capture  = new FakeWinHookCaptureService();
         var log      = new NoopLog();
 
-        var engine = new TargetSwitchingEngine(identity, routing, failsafe, layout, cursor, log);
+        var engine = new TargetSwitchingEngine(identity, routing, failsafe, layout, cursor, capture, log);
         return (engine, cursor, routing, failsafe);
     }
 

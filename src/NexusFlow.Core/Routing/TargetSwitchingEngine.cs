@@ -16,6 +16,7 @@ public sealed class TargetSwitchingEngine : IDisposable
 	private readonly IFailsafeService _failsafe;
 	private readonly ILayoutState _layout;
 	private readonly ICursorTracker _cursor;
+	private readonly IWinHookCaptureService _capture;
 	private readonly IDiagnosticsLog _log;
 
 	private LayoutSnapshot? _snapshot;
@@ -33,6 +34,7 @@ public sealed class TargetSwitchingEngine : IDisposable
 		IFailsafeService failsafe,
 		ILayoutState layout,
 		ICursorTracker cursor,
+		IWinHookCaptureService capture,
 		IDiagnosticsLog log)
 	{
 		_me = me;
@@ -40,6 +42,7 @@ public sealed class TargetSwitchingEngine : IDisposable
 		_failsafe = failsafe;
 		_layout = layout;
 		_cursor = cursor;
+		_capture = capture;
 		_log = log;
 
 		_snapshot = _layout.Current;
@@ -107,6 +110,13 @@ public sealed class TargetSwitchingEngine : IDisposable
 		// Without this the cursor stops wherever the OS last placed it,
 		// which may be a few pixels past the boundary — off the physical screen.
 		var (snappedX, snappedY) = SnapCursorToEdge(local, exitAxis, dx, dy, (int)px, (int)py);
+
+		// Force P0 to the snap position NOW, while still on the hook thread and inside the
+		// current callback chain.  This prevents the hook callback's local-path from
+		// overwriting _lastX/_lastY with the trigger position (which is outside the screen
+		// edge and causes a permanent negative delta offset → remote cursor resists rightward
+		// movement).  The _p0IsLocked flag in WinHookCaptureService guards the overwrite.
+		_capture.SetP0(snappedX, snappedY);
 
 		// Only include entry warp info on a genuine first switch (when we are currently routing
 		// to ourselves). If we are already routing to this peer (re-assertion after 150ms cooldown
