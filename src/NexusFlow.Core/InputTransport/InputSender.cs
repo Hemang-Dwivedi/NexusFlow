@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using System.Buffers;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -64,7 +65,15 @@ public sealed class InputSender : IDisposable
 			if (!IsUsableConnectedSocket(_client, _stream))
 				await ReconnectLockedAsync(ct).ConfigureAwait(false);
 
-			await FramingV2.WriteAsync(_stream!, MessageType.Input, InputCodec.Encode(ev), ct).ConfigureAwait(false);
+			var (buf, len) = InputCodecBinary.Encode(ev);
+			try
+			{
+				await FramingV2.WritePooledAsync(_stream!, MessageType.Input, buf, len, ct).ConfigureAwait(false);
+			}
+			finally
+			{
+				ArrayPool<byte>.Shared.Return(buf);
+			}
 		}
 		catch
 		{

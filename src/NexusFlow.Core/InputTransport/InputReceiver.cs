@@ -86,15 +86,22 @@ public sealed class InputReceiver
 		{
 			while (!ct.IsCancellationRequested)
 			{
-				var (type, payload) = await FramingV2.ReadAsync(stream, ct).ConfigureAwait(false);
-				if (type != MessageType.Input)
-					continue;
+				var (type, rentedPayload, len) = await FramingV2.ReadPooledAsync(stream, ct).ConfigureAwait(false);
+				try
+				{
+					if (type != MessageType.Input)
+						continue;
 
-				var ev = InputCodec.Decode<InputEventV1>(payload);
-				if (_failsafe.IsBlocked)
-					continue; // local-only safety: never inject while failsafe ON
+					if (_failsafe.IsBlocked)
+						continue; // local-only safety: never inject while failsafe ON
 
-				_injector.Inject(ev);
+					var ev = InputCodecBinary.Decode(rentedPayload.AsSpan(0, len), hello.FromPeerId);
+					_injector.Inject(ev);
+				}
+				finally
+				{
+					System.Buffers.ArrayPool<byte>.Shared.Return(rentedPayload);
+				}
 			}
 		}
 		catch

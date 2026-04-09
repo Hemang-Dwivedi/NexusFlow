@@ -1,4 +1,4 @@
-﻿namespace NexusFlow.Protocol.Input;
+namespace NexusFlow.Protocol.Input;
 
 public enum InputKind : byte
 {
@@ -8,7 +8,10 @@ public enum InputKind : byte
 	MouseWheel = 4
 }
 
-public sealed record InputEventV1(
+// All types are readonly record structs so the input pipeline carries events
+// by value through the Channel — no per-event heap allocations on sender or receiver.
+
+public readonly record struct InputEventV1(
 	string FromPeerId,
 	long Seq,
 	long TimestampUtcTicks,
@@ -19,7 +22,7 @@ public sealed record InputEventV1(
 	InputMouseWheelPayload? Wheel = null
 );
 
-public sealed record InputKeyPayload(int VkCode, int ScanCode, bool IsDown);
-public sealed record InputMouseMovePayload(int Dx, int Dy, int X, int Y);
-public sealed record InputMouseButtonPayload(byte Button /*L=1,R=2,M=3*/, bool IsDown, int X, int Y);
-public sealed record InputMouseWheelPayload(int Delta, int X, int Y);
+public readonly record struct InputKeyPayload(int VkCode, int ScanCode, bool IsDown);
+public readonly record struct InputMouseMovePayload(int Dx, int Dy, int X, int Y);
+public readonly record struct InputMouseButtonPayload(byte Button /*L=1,R=2,M=3*/, bool IsDown, int X, int Y);
+public readonly record struct InputMouseWheelPayload(int Delta, int X, int Y);

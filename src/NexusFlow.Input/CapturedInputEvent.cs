@@ -1,8 +1,11 @@
-﻿namespace NexusFlow.Input;
+namespace NexusFlow.Input;
 
 public enum CapturedKeyAction { Down, Up }
 
-public sealed record CapturedKeyEvent(
+// All captured event types are readonly record structs so hook callbacks
+// never allocate on the heap for the most common events (mouse moves).
+
+public readonly record struct CapturedKeyEvent(
 	int VkCode,
 	int ScanCode,
 	int Flags,
@@ -10,7 +13,7 @@ public sealed record CapturedKeyEvent(
 	long TimestampUtcTicks
 );
 
-public sealed record CapturedMouseMoveEvent(
+public readonly record struct CapturedMouseMoveEvent(
 	int Dx, int Dy,
 	int X, int Y,
 	long TimestampUtcTicks
@@ -19,14 +22,14 @@ public sealed record CapturedMouseMoveEvent(
 public enum CapturedMouseButton { Left, Right, Middle }
 public enum MouseButtonAction { Down, Up }
 
-public sealed record CapturedMouseButtonEvent(
+public readonly record struct CapturedMouseButtonEvent(
 	CapturedMouseButton Button,
 	MouseButtonAction Action,
 	int X, int Y,
 	long TimestampUtcTicks
 );
 
-public sealed record CapturedMouseWheelEvent(
+public readonly record struct CapturedMouseWheelEvent(
 	int Delta,
 	int X, int Y,
 	long TimestampUtcTicks

@@ -12,19 +12,19 @@ public sealed class WindowsSendInputInjector : IInputInjector
 		switch (ev.Kind)
 		{
 			case InputKind.Key:
-				InjectKey(ev.Key!);
+				InjectKey(ev.Key.GetValueOrDefault());
 				break;
 
 			case InputKind.MouseMove:
-				InjectMouseMove(ev.Move!);
+				InjectMouseMove(ev.Move.GetValueOrDefault());
 				break;
 
 			case InputKind.MouseButton:
-				InjectMouseButton(ev.Button!);
+				InjectMouseButton(ev.Button.GetValueOrDefault());
 				break;
 
 			case InputKind.MouseWheel:
-				InjectMouseWheel(ev.Wheel!);
+				InjectMouseWheel(ev.Wheel.GetValueOrDefault());
 				break;
 		}
 	}
