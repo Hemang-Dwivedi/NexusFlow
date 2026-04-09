@@ -49,9 +49,29 @@ public sealed class TargetSwitchingEngine : IDisposable
 		_layout.Changed += OnLayoutChanged;
 		_cursor.Moved += OnCursorMoved;
 		_routing.CursorWarpRequested += OnCursorWarpRequested;
+		_routing.ActiveTargetChanged += OnActiveTargetChanged;
 	}
 
 	private void OnLayoutChanged(LayoutSnapshot? snap) => _snapshot = snap;
+
+	/// <summary>
+	/// When routing returns to the local peer (session ends), fire a non-blocking compacting
+	/// collection on a background thread. This is the only purposeful GC nudge in NexusFlow:
+	/// it returns committed memory pages to the OS at a natural idle boundary rather than
+	/// interrupting an active session. Do not add additional GC.Collect calls elsewhere.
+	/// </summary>
+	private void OnActiveTargetChanged(object? sender, string targetPeerId)
+	{
+		if (!string.Equals(targetPeerId, _me.PeerId, StringComparison.Ordinal))
+			return; // still routing to a remote peer — do nothing
+
+		// blocking: false → does not pause the routing thread
+		// compacting: true → actually returns pages to the OS (non-compacting often doesn't)
+		Task.Run(() => GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive,
+			blocking: false, compacting: true));
+
+		_log.Info(Cat, "Routing returned to local — scheduled idle memory compaction.");
+	}
 
 	private void OnCursorMoved(int x, int y, int dx, int dy, long ticks)
 	{
@@ -243,5 +263,6 @@ public sealed class TargetSwitchingEngine : IDisposable
 		_cursor.Moved -= OnCursorMoved;
 		_layout.Changed -= OnLayoutChanged;
 		_routing.CursorWarpRequested -= OnCursorWarpRequested;
+		_routing.ActiveTargetChanged -= OnActiveTargetChanged;
 	}
 }
