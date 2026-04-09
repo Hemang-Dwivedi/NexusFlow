@@ -62,6 +62,9 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 	private int _lastX;
 	private int _lastY;
 	private bool _hasLast;
+	// Tracks whether the previous WM_MOUSEMOVE was injected (InjectedEventMarker.Magic).
+	// Used to detect hardware↔injected transitions and reset the delta baseline.
+	private bool _lastMoveWasInjected;
 
 	// Read on the hook thread at the moment of each event — never stale.
 	private volatile Func<bool>? _shouldRouteToRemote;
@@ -248,9 +251,44 @@ public sealed class WinHookCaptureService : IWinHookCaptureService, IDisposable
 			var msg = (MouseMessage)wParam;
 			var ms = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
 
-			// Never capture NexusFlow-injected events — always pass them through
+			// NexusFlow-injected mouse moves: track position for TargetSwitchingEngine
+			// on the RECEIVER so it can detect when the remote cursor reaches a screen
+			// edge and auto-switch back. Non-move injected events pass through unchanged.
+			//
+			// The baseline is reset on the first injected event after hardware events
+			// (hardware→injected transition) so the first delta is always clean.
+			// Without this reset the first injected dx = injected_pos − last_hardware_pos
+			// which is a huge spurious jump that immediately triggers a false boundary cross.
 			if (ms.dwExtraInfo == InjectedEventMarker.Magic)
+			{
+				if (msg == MouseMessage.WM_MOUSEMOVE)
+				{
+					var ix = ms.pt.x;
+					var iy = ms.pt.y;
+
+					if (!_lastMoveWasInjected)
+					{
+						// First injected event after hardware — just set baseline, no delta.
+						_lastX = ix; _lastY = iy; _hasLast = true;
+						_lastMoveWasInjected = true;
+					}
+					else if (_hasLast)
+					{
+						var idx = ix - _lastX;
+						var idy = iy - _lastY;
+						if (idx != 0 || idy != 0)
+							MouseMove?.Invoke(new CapturedMouseMoveEvent(
+								Dx: idx, Dy: idy, X: ix, Y: iy,
+								TimestampUtcTicks: DateTime.UtcNow.Ticks));
+						_lastX = ix; _lastY = iy;
+					}
+				}
 				return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+			}
+
+			// Hardware event — mark the transition flag so the next injected event
+			// gets a fresh baseline rather than a delta from hardware coordinates.
+			_lastMoveWasInjected = false;
 
 			// Decide once for this entire event — avoids invoking the delegate twice.
 			var routeToRemote = _shouldRouteToRemote?.Invoke() ?? false;
