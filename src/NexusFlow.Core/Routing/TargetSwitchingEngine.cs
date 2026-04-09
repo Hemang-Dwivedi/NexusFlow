@@ -108,11 +108,16 @@ public sealed class TargetSwitchingEngine : IDisposable
 		// which may be a few pixels past the boundary — off the physical screen.
 		var (snappedX, snappedY) = SnapCursorToEdge(local, exitAxis, dx, dy, (int)px, (int)py);
 
-		// Compute which edge of B the cursor should enter from (opposite of our exit),
-		// and the normalized position (0–1) along that edge so B can warp correctly.
-		var (entryEdge, entryNormalized) = ComputeEntryInfo(local, exitAxis, dx, dy, snappedX, snappedY);
+		// Only include entry warp info on a genuine first switch (when we are currently routing
+		// to ourselves). If we are already routing to this peer (re-assertion after 150ms cooldown
+		// because the frozen cursor is still at the boundary), do NOT include entry info — the
+		// receiver would warp back to the entry edge on every re-assertion, making the cursor stick.
+		var isNewSwitch = string.Equals(_routing.ActiveTargetPeerId, _me.PeerId, StringComparison.Ordinal);
+		var (entryEdge, entryNormalized) = isNewSwitch
+			? ComputeEntryInfo(local, exitAxis, dx, dy, snappedX, snappedY)
+			: (EntryEdge.None, 0.5);
 
-		// Distributed stamped target switch — includes cursor warp hint for the receiver.
+		// Distributed stamped target switch — includes cursor warp hint on first switch only.
 		_ = _routing.RequestSetActiveTargetAsync(targetPeerId, entryEdge, entryNormalized);
 
 		_log.Info(Cat, $"Auto-switch target -> {targetPeerId} (dx={dx},dy={dy} @ {x},{y}) entry={entryEdge}@{entryNormalized:F2}");
