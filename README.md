@@ -12,12 +12,14 @@ This project is being built with a strong focus on **safety**, **low latency**, 
 
 ## ⚠️ Project Status
 
-**Status: Active Development (Phase 1)**
+**Status: Phase 1 Complete — Phase 2 Active**
 
-NexusFlow is under heavy, ongoing development. Internal APIs, protocol formats, and implementation details may change frequently.
+Phase 1 (stable input routing between two Windows peers) is complete. The core routing pipeline, failsafe, layout editor, auth, and transport are all production-ready for LAN use between Windows machines.
+
+Phase 2 is now underway, focusing on reconnection resilience and screen sharing.
 
 The project is intentionally being developed **in the open** to document architectural decisions, trade-offs, and lessons learned while building a real-time peer-to-peer system on Windows.
-> Detailed internal architecture and customization documentation will be added once Phase 1 stabilizes.
+
 ---
 
 ## 🎯 Problem Statement
@@ -59,7 +61,7 @@ NexusFlow aims to solve this by:
 
 * No unauthenticated input injection
 * Explicit trust required before any control is allowed
-* All connections are encrypted
+* HMAC-SHA256 authenticated transport after pairing
 
 ### 4. UI-First Desktop Experience
 
@@ -70,22 +72,26 @@ NexusFlow aims to solve this by:
 
 ## 🧠 What NexusFlow Does (Phase 1)
 
-### Implemented / In Progress
+### Implemented
 
-* LAN-based peer discovery
-* Explicit peer trust & pairing (numeric compare-code)
-* Encrypted peer-to-peer transport
-* Input routing foundations (mouse & keyboard)
-* Global failsafe hotkey (Shift + Esc)
-* Windows-style display layout editor
-* Persistent settings across restarts
+* LAN-based peer discovery (UDP multicast)
+* Explicit peer trust & pairing (ECDH + numeric compare-code)
+* Authenticated peer-to-peer transport (TCP, binary framing)
+* Seamless mouse & keyboard routing across peers
+* Cursor edge detection with configurable layout — move your mouse off one screen and it appears on the next machine
+* Proportional cursor warp — cursor enters the remote machine at the correct edge position relative to where it exited the local screen
+* Global failsafe hotkey (Shift + Esc) with stuck-modifier release on disconnect
+* Windows-style display layout editor with real monitor topology
+* Persistent layout and trust decisions across restarts
 * Detailed diagnostics and logging
+* Zero-allocation hot path (binary wire protocol, pooled buffers, value-type events)
 
 ### Not Yet Implemented (By Design)
 
 * Audio sharing
 * Screen sharing / remote displays
 * WAN / internet-based peers
+* Android client
 * macOS / Linux support
 
 ---
@@ -96,29 +102,28 @@ NexusFlow separates control into **two independent runtime concepts**:
 
 ### Active Target
 
-* The peer currently being controlled
-* Determined by display layout and cursor movement
+* The peer currently receiving input
+* Switches automatically when the cursor crosses a configured screen edge
 
 ### Active Input Source
 
 * The peer whose physical devices are generating input
-* Switches dynamically based on user intent
+* Switches dynamically alongside the active target
 
-### Switching Rules (Simplified)
+### How Switching Works
 
-* Keyboard press → immediate switch
-* Mouse click / scroll → immediate switch
-* Mouse movement → switch only after threshold
-* Modifier keys are **stateful and preserved** across switches
-
-This design prevents phantom input, stuck modifiers, and ambiguous ownership.
+* The cursor is tracked against the configured display layout
+* When the cursor crosses the edge shared with a neighbouring peer, input is automatically routed to that peer
+* On switch, the cursor is warped to the corresponding entry position on the remote screen — proportionally mapped so movement direction feels natural regardless of resolution difference
+* A small hysteresis margin and 150ms cooldown prevent flapping at boundaries
+* On disconnect or failsafe, all held modifier keys (Shift, Ctrl, Alt, Win) are released to prevent stuck keys
 
 ---
 
 ## 🖥 Display & Layout Model
 
 * Each peer reports its local monitors using Windows APIs
-* A peer is represented as a **single draggable block**
+* A peer is represented as a **single draggable block** in the layout editor
 * Internal monitor layout is read-only (matches Windows Display Settings)
 * Physical pixels are the source of truth
 * Mixed resolutions, DPI scaling, and rotations are supported
@@ -135,48 +140,52 @@ Hot-plug behavior:
 
 NexusFlow is built as a set of modular, testable components:
 
-1. Discovery
-2. Identity & Trust
-3. Transport (Encrypted P2P)
-4. Protocol (Versioned & forward-compatible)
-5. Routing Engine
-6. OS Integration (hooks, injection, hotkeys)
-7. UI Layer (MVVM)
+1. **Discovery** — UDP multicast (port 49721)
+2. **Identity & Trust** — ECDH pairing, HMAC-SHA256, persisted trust store
+3. **Transport** — TCP framing (port 49800), binary wire protocol
+4. **Protocol** — Versioned, forward-compatible, zero-allocation codec
+5. **Routing Engine** — Lamport-stamped Last-Write-Wins conflict resolution
+6. **OS Integration** — Low-level Windows hooks, SendInput injection, cursor tracking
+7. **UI Layer** — Avalonia MVVM, fully decoupled from Win32 layer
 
 Key architectural rules:
 
 * No uncontrolled global mutable state
 * UI thread is never blocked by networking or hooks
 * Every routing and protocol decision is loggable
+* Input hot path produces zero heap allocations per event
 
 ---
 
 ## 🧰 Tech Stack (Phase 1)
 
 * **Language:** C# (.NET 8)
-* **UI:** Avalonia UI
+* **UI:** Avalonia UI (MVVM)
 * **Platform:** Windows 10 / 11 (x64)
-* **OS Integration:** Windows APIs via P/Invoke
+* **OS Integration:** Windows APIs via P/Invoke (low-level hooks, SendInput, DPI, display topology)
+* **Wire Protocol:** Custom binary framing — ~25 bytes per input event vs ~150 bytes JSON
+* **Buffers:** `ArrayPool<byte>` throughout the network stack — no per-event heap allocation
 * **DPI Awareness:** Per-Monitor DPI Aware v2
 
 macOS and Linux are intentionally out of scope for Phase 1.
 
 ---
 
-## 🗺 Roadmap (High-Level)
+## 🗺 Roadmap
 
-### Phase 1 (Current)
+### Phase 1 ✅ Complete
 
 * Stable input routing between two Windows peers
 * Robust failsafe behavior
 * Persisted layouts and trust decisions
 * Full diagnostic visibility
+* Zero-allocation hot path
 
-### Phase 2 (Planned)
+### Phase 2 (In Progress)
 
-* Screen sharing (view-only)
-* Remote display extension
-* Android peer support (QR-based pairing)
+* **Reconnection & Resilience** — automatic reconnection with exponential backoff, event retry queues, and visible connection state so brief network hiccups don't drop an active session
+* **Screen Sharing Foundation** — Windows-side DXGI framebuffer capture, binary display stream protocol (`MessageType.Display`), and remote framebuffer rendering in the unified display space
+* Android peer support (native Kotlin, QR-based pairing)
 
 ### Phase 3 (Exploratory)
 
@@ -190,7 +199,7 @@ macOS and Linux are intentionally out of scope for Phase 1.
 
 This project is currently driven by a single developer, but feedback and architectural discussion are welcome.
 
-If you’re interested in:
+If you're interested in:
 
 * distributed systems
 * real-time input routing
