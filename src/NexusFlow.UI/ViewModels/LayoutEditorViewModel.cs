@@ -61,6 +61,14 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
     private double _defaultOriginY = 80;   // default row top  (used as Apply Y anchor)
     private double _rowH;
 
+    // Local block drag offset (canvas pixels). Tracks how far the user has shifted
+    // the entire local cluster from its virtual-derived default position.
+    // Applied variants are committed on Apply and restored on Revert.
+    private double _localBlockOffsetX;
+    private double _localBlockOffsetY;
+    private double _localBlockOffsetXApplied;
+    private double _localBlockOffsetYApplied;
+
     [ObservableProperty] private bool isDirty;
     [ObservableProperty] private string activeTargetName = "Routing to: Local";
 
@@ -224,28 +232,39 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
 
         _defaultOriginY = (CanvasHeight - _rowH) / 2.0;
 
-        // 4. Initialise / update local tile positions
+        // 4. Initialise / update local tile positions.
+        //
+        // Positions are derived from virtual coordinates (same formula as remote tiles)
+        // plus a uniform block offset that tracks user drag of the entire local cluster.
+        // This guarantees no gap between local monitors regardless of scale changes.
         _localKeys.Clear();
+
+        // Infer the current block offset from the first tile's existing canvas position.
+        // Sorted[0] has d.X == _localMinX, so its fresh base is exactly _defaultOriginX.
+        if (sorted.Count > 0 && _pos.TryGetValue(sorted[0].StableId, out var firstTileSnap))
+        {
+            double freshFirstNy = _defaultOriginY + (_rowH - Math.Max(minTileH, sorted[0].Height * _localScale)) / 2.0;
+            _localBlockOffsetX = firstTileSnap.Dx - _defaultOriginX;
+            _localBlockOffsetY = firstTileSnap.Dy - freshFirstNy;
+        }
+
         double cx = _defaultOriginX;
         foreach (var d in sorted)
         {
             double nw = Math.Max(minTileW, d.Width  * _localScale);
             double nh = Math.Max(minTileH, d.Height * _localScale);
-            double ny = _defaultOriginY + (_rowH - nh) / 2.0;
+
+            // Base canvas position derived from virtual coords (no block offset)
+            double freshNx = _defaultOriginX + (d.X - _localMinX) * _localScale;
+            double freshNy = _defaultOriginY + (_rowH - nh) / 2.0;
+
+            double nx = freshNx + _localBlockOffsetX;
+            double ny = freshNy + _localBlockOffsetY;
+            double ax = freshNx + _localBlockOffsetXApplied;
+            double ay = freshNy + _localBlockOffsetYApplied;
 
             _localKeys.Add(d.StableId);
-
-            if (!_pos.ContainsKey(d.StableId))
-            {
-                // First appearance: place in default row
-                _pos[d.StableId] = (cx, ny, cx, ny, nw, nh);
-            }
-            else
-            {
-                // Keep dragged position; only update size (scale may change)
-                var e = _pos[d.StableId];
-                _pos[d.StableId] = (e.Ax, e.Ay, e.Dx, e.Dy, nw, nh);
-            }
+            _pos[d.StableId] = (ax, ay, nx, ny, nw, nh);
             cx += nw;
         }
 
@@ -680,6 +699,10 @@ public partial class LayoutEditorViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanApply))]
     private void Apply()
     {
+        // Commit the current local block drag offset so Revert can restore it.
+        _localBlockOffsetXApplied = _localBlockOffsetX;
+        _localBlockOffsetYApplied = _localBlockOffsetY;
+
         // Use the top-left corner of the local display cluster as the canvas→virtual
         // anchor.  This correctly accounts for the block having been dragged.
         double anchorCanvasX = _localKeys.Where(_pos.ContainsKey)
