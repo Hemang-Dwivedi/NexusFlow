@@ -15,6 +15,7 @@ internal sealed class FakeRoutingEngine : IRoutingEngine
 
     public event EventHandler<string>? ActiveTargetChanged { add { } remove { } }
     public event EventHandler<string>? ActiveSourceChanged { add { } remove { } }
+    public event Action<NexusFlow.Protocol.Control.EntryEdge, double>? CursorWarpRequested { add { } remove { } }
 
     public Task RequestSetActiveSourceAsync(string peerId, CancellationToken ct = default)
     {
@@ -24,6 +25,13 @@ internal sealed class FakeRoutingEngine : IRoutingEngine
     }
 
     public Task RequestSetActiveTargetAsync(string peerId, CancellationToken ct = default)
+    {
+        SetTargetCalls.Add(peerId);
+        ActiveTargetPeerId = peerId;
+        return Task.CompletedTask;
+    }
+
+    public Task RequestSetActiveTargetAsync(string peerId, NexusFlow.Protocol.Control.EntryEdge entryEdge, double entryNormalized, CancellationToken ct = default)
     {
         SetTargetCalls.Add(peerId);
         ActiveTargetPeerId = peerId;

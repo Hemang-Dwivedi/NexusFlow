@@ -62,6 +62,7 @@ public sealed class RoutingEngine : IRoutingEngine
 
 	public event EventHandler<string>? ActiveTargetChanged;
 	public event EventHandler<string>? ActiveSourceChanged;
+	public event Action<EntryEdge, double>? CursorWarpRequested;
 
 	public (string ActiveTargetPeerId, LamportStamp TargetStamp,
 			string ActiveSourcePeerId, LamportStamp SourceStamp) GetSnapshotV2()
@@ -78,6 +79,7 @@ public sealed class RoutingEngine : IRoutingEngine
 
 		string? raiseTarget = null;
 		string? raiseSource = null;
+		(EntryEdge Edge, double Normalized)? warpArgs = null;
 
 		lock (_gate)
 		{
@@ -92,6 +94,11 @@ public sealed class RoutingEngine : IRoutingEngine
 					_activeTarget = t.TargetPeerId;
 					_targetStamp = t.Stamp;
 					raiseTarget = _activeTarget;
+
+					// If we are being made the target and the sender included entry info, warp cursor.
+					if (t.EntryEdge != EntryEdge.None &&
+					    string.Equals(t.TargetPeerId, _localPeerId, StringComparison.Ordinal))
+						warpArgs = (t.EntryEdge, t.EntryNormalized);
 					break;
 
 				case SetActiveSourceV2 s:
@@ -138,6 +145,7 @@ public sealed class RoutingEngine : IRoutingEngine
 
 		if (raiseTarget is not null) ActiveTargetChanged?.Invoke(this, ActiveTargetPeerId);
 		if (raiseSource is not null) ActiveSourceChanged?.Invoke(this, ActiveSourcePeerId);
+		if (warpArgs.HasValue) CursorWarpRequested?.Invoke(warpArgs.Value.Edge, warpArgs.Value.Normalized);
 
 		return new RoutingApplyResult(RoutingApplyDecision.Applied);
 	}
@@ -174,20 +182,23 @@ public sealed class RoutingEngine : IRoutingEngine
 	// Add inside RoutingEngine (same file)
 
 	public Task SetActiveTargetLocalOnlyAsync(string targetPeerId, CancellationToken ct = default)
-		=> SetActiveTargetCoreAsync(targetPeerId, broadcast: false, ct);
+		=> SetActiveTargetCoreAsync(targetPeerId, EntryEdge.None, 0.5, broadcast: false, ct);
 
 	public Task SetActiveSourceLocalOnlyAsync(string sourcePeerId, CancellationToken ct = default)
 		=> SetActiveSourceCoreAsync(sourcePeerId, broadcast: false, ct);
 
 	// Keep your existing methods, but forward them:
 	public Task RequestSetActiveTargetAsync(string targetPeerId, CancellationToken ct = default)
-		=> SetActiveTargetCoreAsync(targetPeerId, broadcast: true, ct);
+		=> SetActiveTargetCoreAsync(targetPeerId, EntryEdge.None, 0.5, broadcast: true, ct);
+
+	public Task RequestSetActiveTargetAsync(string targetPeerId, EntryEdge entryEdge, double entryNormalized, CancellationToken ct = default)
+		=> SetActiveTargetCoreAsync(targetPeerId, entryEdge, entryNormalized, broadcast: true, ct);
 
 	public Task RequestSetActiveSourceAsync(string sourcePeerId, CancellationToken ct = default)
 		=> SetActiveSourceCoreAsync(sourcePeerId, broadcast: true, ct);
 
 	// New shared implementations (private)
-	private async Task SetActiveTargetCoreAsync(string targetPeerId, bool broadcast, CancellationToken ct)
+	private async Task SetActiveTargetCoreAsync(string targetPeerId, EntryEdge entryEdge, double entryNormalized, bool broadcast, CancellationToken ct)
 	{
 		if (_failsafe.IsBlocked && !string.Equals(targetPeerId, _localPeerId, StringComparison.Ordinal))
 		{
@@ -213,8 +224,8 @@ public sealed class RoutingEngine : IRoutingEngine
 			return;
 		}
 
-		_log.Info(Cat, $"TX SetActiveTargetV2 -> {targetPeerId} stamp={newStamp.Counter}@{newStamp.PeerId}");
-		await _control.BroadcastAsync(new SetActiveTargetV2(targetPeerId, newStamp), ct).ConfigureAwait(false);
+		_log.Info(Cat, $"TX SetActiveTargetV2 -> {targetPeerId} entry={entryEdge}@{entryNormalized:F2} stamp={newStamp.Counter}@{newStamp.PeerId}");
+		await _control.BroadcastAsync(new SetActiveTargetV2(targetPeerId, newStamp, entryEdge, entryNormalized), ct).ConfigureAwait(false);
 	}
 
 	private async Task SetActiveSourceCoreAsync(string sourcePeerId, bool broadcast, CancellationToken ct)

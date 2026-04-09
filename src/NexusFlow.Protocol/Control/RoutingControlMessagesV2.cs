@@ -16,7 +16,17 @@ public readonly record struct LamportStamp(long Counter, string PeerId)
 	public bool IsNewerThan(in LamportStamp other) => Compare(this, other) > 0;
 }
 
-public sealed record SetActiveTargetV2(string TargetPeerId, LamportStamp Stamp);
+/// <summary>
+/// Which edge of the target peer's screen the cursor should enter from.
+/// Determined by the sender: if A exits its Right edge, B enters from B's Left.
+/// </summary>
+public enum EntryEdge { None = 0, Left, Right, Top, Bottom }
+
+public sealed record SetActiveTargetV2(
+    string TargetPeerId,
+    LamportStamp Stamp,
+    EntryEdge EntryEdge = EntryEdge.None,
+    double EntryNormalized = 0.5);
 
 public sealed record SetActiveSourceV2(string SourcePeerId, LamportStamp Stamp);
 

@@ -3,6 +3,7 @@ using NexusFlow.Core.Layout;
 using NexusFlow.Core.Services;
 using NexusFlow.Identity;
 using NexusFlow.Input;
+using NexusFlow.Protocol.Control;
 
 namespace NexusFlow.Core.Routing;
 
@@ -44,6 +45,7 @@ public sealed class TargetSwitchingEngine : IDisposable
 		_snapshot = _layout.Current;
 		_layout.Changed += OnLayoutChanged;
 		_cursor.Moved += OnCursorMoved;
+		_routing.CursorWarpRequested += OnCursorWarpRequested;
 	}
 
 	private void OnLayoutChanged(LayoutSnapshot? snap) => _snapshot = snap;
@@ -104,12 +106,16 @@ public sealed class TargetSwitchingEngine : IDisposable
 		// Snap cursor to the exact edge pixel before the hook freezes it.
 		// Without this the cursor stops wherever the OS last placed it,
 		// which may be a few pixels past the boundary — off the physical screen.
-		SnapCursorToEdge(local, exitAxis, dx, dy, (int)px, (int)py);
+		var (snappedX, snappedY) = SnapCursorToEdge(local, exitAxis, dx, dy, (int)px, (int)py);
 
-		// Distributed stamped target switch
-		_ = _routing.RequestSetActiveTargetAsync(targetPeerId);
+		// Compute which edge of B the cursor should enter from (opposite of our exit),
+		// and the normalized position (0–1) along that edge so B can warp correctly.
+		var (entryEdge, entryNormalized) = ComputeEntryInfo(local, exitAxis, dx, dy, snappedX, snappedY);
 
-		_log.Info(Cat, $"Auto-switch target -> {targetPeerId} (dx={dx},dy={dy} @ {x},{y})");
+		// Distributed stamped target switch — includes cursor warp hint for the receiver.
+		_ = _routing.RequestSetActiveTargetAsync(targetPeerId, entryEdge, entryNormalized);
+
+		_log.Info(Cat, $"Auto-switch target -> {targetPeerId} (dx={dx},dy={dy} @ {x},{y}) entry={entryEdge}@{entryNormalized:F2}");
 	}
 
 	private static Axis DominantAxis(int dx, int dy)
@@ -133,11 +139,11 @@ public sealed class TargetSwitchingEngine : IDisposable
 
 	private enum Axis { Horizontal, Vertical }
 
-	private static void SnapCursorToEdge(PeerRect local, Axis axis, int dx, int dy, int currentX, int currentY)
+	private static (int X, int Y) SnapCursorToEdge(PeerRect local, Axis axis, int dx, int dy, int currentX, int currentY)
 	{
+		int ex = currentX, ey = currentY;
 		try
 		{
-			int ex = currentX, ey = currentY;
 			if (axis == Axis.Horizontal)
 				ex = dx > 0 ? (int)(local.X + local.Width - 1) : (int)local.X;
 			else
@@ -145,6 +151,73 @@ public sealed class TargetSwitchingEngine : IDisposable
 			SetCursorPos(ex, ey);
 		}
 		catch { }
+		return (ex, ey);
+	}
+
+	/// <summary>
+	/// Computes the entry edge and normalized position (0–1) along that edge for the remote peer.
+	/// "Entry edge" is the opposite of our exit edge: if we leave via Right, B enters from Left.
+	/// "Normalized" is the fractional position along the perpendicular axis so B can proportionally
+	/// place the cursor even when A and B have different resolutions.
+	/// </summary>
+	private static (EntryEdge Edge, double Normalized) ComputeEntryInfo(
+		PeerRect local, Axis exitAxis, int dx, int dy, int snappedX, int snappedY)
+	{
+		if (exitAxis == Axis.Horizontal)
+		{
+			var normalized = local.Height > 0 ? (snappedY - local.Y) / local.Height : 0.5;
+			normalized = Math.Clamp(normalized, 0.0, 1.0);
+			return (dx > 0 ? EntryEdge.Left : EntryEdge.Right, normalized);
+		}
+		else
+		{
+			var normalized = local.Width > 0 ? (snappedX - local.X) / local.Width : 0.5;
+			normalized = Math.Clamp(normalized, 0.0, 1.0);
+			return (dy > 0 ? EntryEdge.Top : EntryEdge.Bottom, normalized);
+		}
+	}
+
+	/// <summary>
+	/// Called on the receiving peer (B) when A switches routing to us.
+	/// Warps cursor to the entry edge position so movement direction feels natural.
+	/// </summary>
+	private void OnCursorWarpRequested(EntryEdge edge, double normalized)
+	{
+		var snap = _snapshot;
+		if (snap is null) return;
+		if (!snap.TryGetPeerRect(_me.PeerId, out var local)) return;
+
+		// Place cursor just inside the entry edge (WarpInsetPx) to avoid immediately
+		// triggering switch-back, which fires when cursor is within ExitMarginPx of an edge.
+		const int WarpInsetPx = 20;
+
+		int wx, wy;
+		switch (edge)
+		{
+			case EntryEdge.Left:
+				wx = (int)(local.X + WarpInsetPx);
+				wy = (int)(local.Y + normalized * local.Height);
+				break;
+			case EntryEdge.Right:
+				wx = (int)(local.X + local.Width - 1 - WarpInsetPx);
+				wy = (int)(local.Y + normalized * local.Height);
+				break;
+			case EntryEdge.Top:
+				wx = (int)(local.X + normalized * local.Width);
+				wy = (int)(local.Y + WarpInsetPx);
+				break;
+			case EntryEdge.Bottom:
+				wx = (int)(local.X + normalized * local.Width);
+				wy = (int)(local.Y + local.Height - 1 - WarpInsetPx);
+				break;
+			default:
+				return;
+		}
+
+		try { SetCursorPos(wx, wy); }
+		catch { }
+
+		_log.Info(Cat, $"Cursor warped to entry {edge}@{normalized:F2} -> ({wx},{wy})");
 	}
 
 	[System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -154,5 +227,6 @@ public sealed class TargetSwitchingEngine : IDisposable
 	{
 		_cursor.Moved -= OnCursorMoved;
 		_layout.Changed -= OnLayoutChanged;
+		_routing.CursorWarpRequested -= OnCursorWarpRequested;
 	}
 }
